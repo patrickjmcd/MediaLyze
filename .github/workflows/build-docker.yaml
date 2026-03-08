@@ -10,12 +10,15 @@ permissions:
   contents: read
   packages: write
 
+env:
+  IMAGE_NAME: ghcr.io/frederikemmer/medialyze
+
 jobs:
   publish_images:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: Read image version
         id: version
         run: echo "version=$(grep -E '^ARG APP_VERSION=' Dockerfile | cut -d= -f2)" >> "$GITHUB_OUTPUT"
@@ -29,8 +32,8 @@ jobs:
         run: |
           docker build \
             --build-arg APP_VERSION="${{ steps.version.outputs.version }}" \
-            -t ghcr.io/frederikemmer/MediaLyze:latest \
-            -t ghcr.io/frederikemmer/MediaLyze:${{ steps.version.outputs.version }} \
+            -t "${IMAGE_NAME}:latest" \
+            -t "${IMAGE_NAME}:${{ steps.version.outputs.version }}" \
             .
-          docker push ghcr.io/frederikemmer/MediaLyze:latest
-          docker push ghcr.io/frederikemmer/MediaLyze:${{ steps.version.outputs.version }}
+          docker push "${IMAGE_NAME}:latest"
+          docker push "${IMAGE_NAME}:${{ steps.version.outputs.version }}"
