@@ -14,7 +14,6 @@ on:
       - 'CONTRIBUTING.md'
       - '.github/workflows/build-docker.yaml'
   workflow_dispatch:
-  workflow_dispatch:
 
 permissions:
   contents: read
