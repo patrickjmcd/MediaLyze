@@ -4,7 +4,7 @@ on:
     branches:
       - main
     paths:
-      - 'Dockerfile_temp_off'
+      - 'Dockerfile'
 
 permissions:
   contents: read
