@@ -1,0 +1,132 @@
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.orm import Session
+
+from backend.app.api.deps import get_app_settings, get_db_session, get_scan_runtime
+from backend.app.core.config import Settings
+from backend.app.schemas.browse import BrowseResponse
+from backend.app.schemas.library import LibraryCreate, LibraryDetail, LibrarySummary, LibraryUpdate
+from backend.app.schemas.media import DashboardResponse, MediaFileDetail, MediaFileTableRow
+from backend.app.schemas.scan import ScanJobRead, ScanRequest
+from backend.app.services.browse import browse_media_root
+from backend.app.services.library_service import create_library, get_library_detail, list_libraries, update_library_settings
+from backend.app.services.media_service import get_media_file_detail, list_library_files
+from backend.app.services.runtime import ScanRuntimeManager
+from backend.app.services.scan_jobs import list_active_scan_jobs, list_library_scan_jobs, serialize_scan_job
+from backend.app.services.scanner import queue_scan_job
+from backend.app.services.stats import build_dashboard
+
+router = APIRouter()
+
+
+@router.get("/health")
+def health() -> dict[str, str]:
+    return {"status": "ok"}
+
+
+@router.get("/browse", response_model=BrowseResponse)
+def browse(
+    path: str = Query(default="."),
+    settings: Settings = Depends(get_app_settings),
+) -> BrowseResponse:
+    try:
+        return browse_media_root(settings, path)
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/dashboard", response_model=DashboardResponse)
+def dashboard(db: Session = Depends(get_db_session)) -> DashboardResponse:
+    return build_dashboard(db)
+
+
+@router.get("/scan-jobs/active", response_model=list[ScanJobRead])
+def active_scan_jobs(db: Session = Depends(get_db_session)) -> list[ScanJobRead]:
+    return list_active_scan_jobs(db)
+
+
+@router.get("/libraries", response_model=list[LibrarySummary])
+def libraries(db: Session = Depends(get_db_session)) -> list[LibrarySummary]:
+    return list_libraries(db)
+
+
+@router.post("/libraries", response_model=LibrarySummary, status_code=201)
+def libraries_create(
+    payload: LibraryCreate,
+    db: Session = Depends(get_db_session),
+    settings: Settings = Depends(get_app_settings),
+    runtime: ScanRuntimeManager = Depends(get_scan_runtime),
+) -> LibrarySummary:
+    try:
+        library = create_library(db, settings, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    runtime.sync_library(library.id)
+    for item in list_libraries(db):
+        if item.id == library.id:
+            return item
+    raise HTTPException(status_code=500, detail="Failed to load created library")
+
+
+@router.get("/libraries/{library_id}", response_model=LibraryDetail)
+def library_detail(library_id: int, db: Session = Depends(get_db_session)) -> LibraryDetail:
+    library = get_library_detail(db, library_id)
+    if not library:
+        raise HTTPException(status_code=404, detail="Library not found")
+    return library
+
+
+@router.get("/libraries/{library_id}/scan-jobs", response_model=list[ScanJobRead])
+def library_scan_jobs(
+    library_id: int,
+    limit: int = Query(default=10, ge=1, le=50),
+    db: Session = Depends(get_db_session),
+) -> list[ScanJobRead]:
+    if get_library_detail(db, library_id) is None:
+        raise HTTPException(status_code=404, detail="Library not found")
+    return list_library_scan_jobs(db, library_id, limit)
+
+
+@router.patch("/libraries/{library_id}", response_model=LibrarySummary)
+def library_update(
+    library_id: int,
+    payload: LibraryUpdate,
+    db: Session = Depends(get_db_session),
+    runtime: ScanRuntimeManager = Depends(get_scan_runtime),
+) -> LibrarySummary:
+    library = update_library_settings(db, library_id, payload)
+    if library is None:
+        raise HTTPException(status_code=404, detail="Library not found")
+
+    runtime.sync_library(library.id)
+    for item in list_libraries(db):
+        if item.id == library.id:
+            return item
+    raise HTTPException(status_code=500, detail="Failed to load updated library")
+
+
+@router.get("/libraries/{library_id}/files", response_model=list[MediaFileTableRow])
+def library_files(library_id: int, db: Session = Depends(get_db_session)) -> list[MediaFileTableRow]:
+    return list_library_files(db, library_id)
+
+
+@router.post("/libraries/{library_id}/scan", response_model=ScanJobRead, status_code=202)
+def library_scan(
+    library_id: int,
+    payload: ScanRequest,
+    db: Session = Depends(get_db_session),
+    runtime: ScanRuntimeManager = Depends(get_scan_runtime),
+) -> ScanJobRead:
+    if get_library_detail(db, library_id) is None:
+        raise HTTPException(status_code=404, detail="Library not found")
+
+    job, created = queue_scan_job(db, library_id, payload.scan_type)
+    runtime.submit_scan_job(job.id)
+    return serialize_scan_job(job)
+
+
+@router.get("/files/{file_id}", response_model=MediaFileDetail)
+def file_detail(file_id: int, db: Session = Depends(get_db_session)) -> MediaFileDetail:
+    media_file = get_media_file_detail(db, file_id)
+    if not media_file:
+        raise HTTPException(status_code=404, detail="Media file not found")
+    return media_file

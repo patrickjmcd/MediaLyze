@@ -1,0 +1,156 @@
+export type DistributionItem = {
+  label: string;
+  value: number;
+};
+
+export type DashboardResponse = {
+  totals: Record<string, number>;
+  video_codec_distribution: DistributionItem[];
+  resolution_distribution: DistributionItem[];
+  hdr_distribution: DistributionItem[];
+  audio_codec_distribution: DistributionItem[];
+  audio_language_distribution: DistributionItem[];
+  subtitle_distribution: DistributionItem[];
+};
+
+export type LibrarySummary = {
+  id: number;
+  name: string;
+  path: string;
+  type: "movies" | "series" | "mixed" | "other";
+  last_scan_at: string | null;
+  scan_mode: "manual" | "scheduled" | "watch";
+  scan_config: Record<string, number>;
+  created_at: string;
+  updated_at: string;
+  file_count: number;
+  total_size_bytes: number;
+  total_duration_seconds: number;
+  ready_files: number;
+  pending_files: number;
+};
+
+export type LibraryDetail = LibrarySummary & {
+  video_codec_distribution: DistributionItem[];
+  resolution_distribution: DistributionItem[];
+  hdr_distribution: DistributionItem[];
+  audio_language_distribution: DistributionItem[];
+  subtitle_language_distribution: DistributionItem[];
+};
+
+export type MediaFileRow = {
+  id: number;
+  library_id: number;
+  relative_path: string;
+  filename: string;
+  extension: string;
+  size_bytes: number;
+  mtime: number;
+  last_seen_at: string;
+  last_analyzed_at: string | null;
+  scan_status: string;
+  quality_score: number;
+  duration: number | null;
+  video_codec: string | null;
+  resolution: string | null;
+  hdr_type: string | null;
+  audio_languages: string[];
+  subtitle_languages: string[];
+};
+
+export type MediaFileDetail = MediaFileRow & {
+  media_format: {
+    container_format: string | null;
+    duration: number | null;
+    bit_rate: number | null;
+    probe_score: number | null;
+  } | null;
+  video_streams: Array<Record<string, string | number | null>>;
+  audio_streams: Array<Record<string, string | number | boolean | null>>;
+  subtitle_streams: Array<Record<string, string | number | boolean | null>>;
+  external_subtitles: Array<Record<string, string | null>>;
+  raw_ffprobe_json: Record<string, unknown> | null;
+};
+
+export type BrowseResponse = {
+  current_path: string;
+  parent_path: string | null;
+  entries: Array<{
+    name: string;
+    path: string;
+    is_dir: boolean;
+  }>;
+};
+
+export type ScanJob = {
+  id: number;
+  library_id: number;
+  library_name: string | null;
+  status: string;
+  job_type: string;
+  files_total: number;
+  files_scanned: number;
+  errors: number;
+  started_at: string | null;
+  finished_at: string | null;
+  progress_percent: number;
+  phase_label: string;
+};
+
+const API_PREFIX = import.meta.env.VITE_API_PREFIX ?? "/api";
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${API_PREFIX}${path}`, {
+    headers: {
+      "Content-Type": "application/json",
+      ...(init?.headers ?? {}),
+    },
+    ...init,
+  });
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null);
+    const detail = payload?.detail ?? response.statusText;
+    throw new Error(detail);
+  }
+
+  return response.json() as Promise<T>;
+}
+
+export const api = {
+  dashboard: () => request<DashboardResponse>("/dashboard"),
+  activeScanJobs: () => request<ScanJob[]>("/scan-jobs/active"),
+  libraries: () => request<LibrarySummary[]>("/libraries"),
+  library: (id: string | number) => request<LibraryDetail>(`/libraries/${id}`),
+  libraryFiles: (id: string | number) => request<MediaFileRow[]>(`/libraries/${id}/files`),
+  libraryScanJobs: (id: string | number) => request<ScanJob[]>(`/libraries/${id}/scan-jobs`),
+  file: (id: string | number) => request<MediaFileDetail>(`/files/${id}`),
+  browse: (path = ".") => request<BrowseResponse>(`/browse?path=${encodeURIComponent(path)}`),
+  createLibrary: (payload: {
+    name: string;
+    path: string;
+    type: string;
+    scan_mode: string;
+    scan_config?: Record<string, number>;
+  }) =>
+    request<LibrarySummary>("/libraries", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  updateLibrarySettings: (
+    libraryId: string | number,
+    payload: {
+      scan_mode: string;
+      scan_config: Record<string, number>;
+    },
+  ) =>
+    request<LibrarySummary>(`/libraries/${libraryId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+  scanLibrary: (libraryId: string | number, scanType: string) =>
+    request<ScanJob>(`/libraries/${libraryId}/scan`, {
+      method: "POST",
+      body: JSON.stringify({ scan_type: scanType }),
+    }),
+};

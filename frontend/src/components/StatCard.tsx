@@ -1,0 +1,15 @@
+type StatCardProps = {
+  label: string;
+  value: string;
+  tone?: "default" | "teal" | "blue";
+};
+
+export function StatCard({ label, value, tone = "default" }: StatCardProps) {
+  return (
+    <article className={`book-card metric-card metric-card-${tone}`}>
+      <p className="eyebrow">{label}</p>
+      <h3>{value}</h3>
+    </article>
+  );
+}
+

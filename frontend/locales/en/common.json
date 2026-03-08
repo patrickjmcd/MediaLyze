@@ -1,0 +1,25 @@
+{
+  "app": {
+    "title": "MediaLyze",
+    "subtitle": "Technical analysis for large video libraries, normalized into a filterable local database."
+  },
+  "nav": {
+    "dashboard": "Dashboard",
+    "libraries": "Libraries"
+  },
+  "dashboard": {
+    "eyebrow": "System overview",
+    "title": "Library telemetry",
+    "subtitle": "Codec, resolution, HDR and subtitle coverage across all indexed libraries."
+  },
+  "libraries": {
+    "eyebrow": "Filesystem libraries",
+    "title": "Media roots",
+    "subtitle": "Each library maps to a directory below MEDIA_ROOT and can be scanned incrementally or fully."
+  },
+  "detail": {
+    "eyebrow": "Library analysis",
+    "files": "Files"
+  }
+}
+
