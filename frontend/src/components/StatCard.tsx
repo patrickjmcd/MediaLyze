@@ -6,10 +6,9 @@ type StatCardProps = {
 
 export function StatCard({ label, value, tone = "default" }: StatCardProps) {
   return (
-    <article className={`book-card metric-card metric-card-${tone}`}>
+    <article className={`media-card metric-card metric-card-${tone}`}>
       <p className="eyebrow">{label}</p>
       <h3>{value}</h3>
     </article>
   );
 }
-

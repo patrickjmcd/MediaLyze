@@ -112,8 +112,8 @@ export function LibrariesPage() {
         <AsyncPanel title="Configured libraries" loading={!libraries.length && !error} error={error}>
           <div className="listing">
             {libraries.map((library) => (
-              <Link className="book-card library-card" key={library.id} to={`/libraries/${library.id}`}>
-                <div className="detail-meta">
+              <Link className="media-card library-card" key={library.id} to={`/libraries/${library.id}`}>
+                <div className="item-meta">
                   <div className="meta-tags">
                     <span className="badge">{library.type}</span>
                     <span className="badge">{library.scan_mode}</span>
@@ -126,7 +126,7 @@ export function LibrariesPage() {
                       ))}
                   </div>
                   <h3>{library.name}</h3>
-                  <p className="book-meta">{library.path}</p>
+                  <p className="media-meta">{library.path}</p>
                 </div>
                 <div className="library-stats">
                   <span>{library.file_count} files</span>

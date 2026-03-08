@@ -40,19 +40,19 @@ export function FileDetailPage() {
           <span className="badge">{file?.hdr_type ?? "SDR"}</span>
         </div>
         <div className="card-grid grid">
-          <article className="book-card metric-card">
+          <article className="media-card metric-card">
             <p className="eyebrow">Relative path</p>
             <h3>{file?.relative_path ?? "…"}</h3>
           </article>
-          <article className="book-card metric-card metric-card-teal">
+          <article className="media-card metric-card metric-card-teal">
             <p className="eyebrow">Size</p>
             <h3>{formatBytes(file?.size_bytes ?? 0)}</h3>
           </article>
-          <article className="book-card metric-card metric-card-blue">
+          <article className="media-card metric-card metric-card-blue">
             <p className="eyebrow">Duration</p>
             <h3>{formatDuration(file?.duration ?? 0)}</h3>
           </article>
-          <article className="book-card metric-card">
+          <article className="media-card metric-card">
             <p className="eyebrow">Quality</p>
             <h3>{file ? `${file.quality_score}/10` : "…"}</h3>
           </article>
@@ -85,4 +85,3 @@ export function FileDetailPage() {
     </>
   );
 }
-

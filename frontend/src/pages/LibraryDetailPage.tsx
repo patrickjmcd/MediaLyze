@@ -232,10 +232,10 @@ export function LibraryDetailPage() {
       <AsyncPanel title="Recent scan jobs" subtitle="Latest queue and run history" error={error}>
         <div className="listing">
           {scanHistory.map((job) => (
-            <div className="book-card compact-card" key={job.id}>
+            <div className="media-card compact-row-card" key={job.id}>
               <div className="stack">
                 <strong>Job #{job.id}</strong>
-                <span className="book-meta">
+                <span className="media-meta">
                   {job.job_type} · {job.phase_label}
                 </span>
               </div>
