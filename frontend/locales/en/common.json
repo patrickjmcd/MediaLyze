@@ -11,6 +11,8 @@
   },
   "scanBanner": {
     "running": "Scan running...",
+    "searchingFound": "searching... ({{count}})",
+    "analyzingProgress": "{{scanned}}/{{total}} ~ {{percent}}% analyzed",
     "libraryFallback": "Library #{{id}}",
     "stopAria": "Stop active scans"
   },
@@ -23,7 +25,8 @@
     "videoCodecs": "Video codecs",
     "resolutions": "Resolutions",
     "hdrCoverage": "HDR coverage",
-    "subtitleSources": "Subtitle sources"
+    "audioLanguages": "Audio languages",
+    "subtitleSources": "Subtitle languages"
   },
   "libraries": {
     "configured": "Configured libraries",
@@ -39,6 +42,8 @@
     "intervalMinutes": "Interval in minutes",
     "debounceSeconds": "Debounce in seconds",
     "scanNow": "Manual scan",
+    "renamePrompt": "Enter a new library name",
+    "renameAria": "Rename library {{name}}",
     "deleteAria": "Delete library {{name}}",
     "lastScan": "Last scan",
     "files": "Files",
@@ -49,7 +54,7 @@
   },
   "libraryTypes": {
     "movies": "Movies",
-    "series": "Series",
+    "series": "Shows",
     "mixed": "Mixed",
     "other": "Other"
   },
@@ -80,6 +85,7 @@
     "indexedEntriesFiltered": "{{shown}} of {{total}} indexed entries",
     "searchLabel": "Search files and metadata",
     "searchPlaceholder": "search files and metadata",
+    "loadingFiles": "Loading analyzed files…",
     "noAnalyzedFiles": "No analyzed files yet.",
     "recentScanJobs": "Recent scan jobs",
     "recentScanJobsSubtitle": "Latest queue and run history",

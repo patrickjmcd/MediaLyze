@@ -3,13 +3,24 @@ from __future__ import annotations
 from collections import defaultdict
 from copy import deepcopy
 
-from sqlalchemy import case, func, select
+from sqlalchemy import case, delete, func, select
 from sqlalchemy.orm import Session
 
 from backend.app.core.config import Settings
-from backend.app.models.entities import AudioStream, Library, MediaFile, MediaFormat, ScanStatus, SubtitleStream, VideoStream
+from backend.app.models.entities import (
+    AudioStream,
+    ExternalSubtitle,
+    Library,
+    MediaFile,
+    MediaFormat,
+    ScanJob,
+    ScanStatus,
+    SubtitleStream,
+    VideoStream,
+)
 from backend.app.schemas.library import LibraryCreate, LibraryDetail, LibrarySummary, LibraryUpdate
 from backend.app.services.languages import merge_language_counts
+from backend.app.services.stats_cache import stats_cache
 from backend.app.utils.pathing import ensure_relative_to_root
 from backend.app.services.video_queries import primary_video_streams_subquery
 
@@ -47,6 +58,7 @@ def normalize_scan_config(scan_mode, scan_config: dict | None) -> dict:
 
 
 def create_library(db: Session, settings: Settings, payload: LibraryCreate) -> Library:
+    cache_key = str(id(db.get_bind()))
     safe_path = ensure_relative_to_root(settings.media_root / payload.path, settings.media_root)
     if not safe_path.exists() or not safe_path.is_dir():
         raise ValueError("Library path must exist as a directory under MEDIA_ROOT")
@@ -60,27 +72,48 @@ def create_library(db: Session, settings: Settings, payload: LibraryCreate) -> L
     db.add(library)
     db.commit()
     db.refresh(library)
+    stats_cache.invalidate(cache_key)
     return library
 
 
 def update_library_settings(db: Session, library_id: int, payload: LibraryUpdate) -> Library | None:
+    cache_key = str(id(db.get_bind()))
     library = db.get(Library, library_id)
     if not library:
         return None
 
-    library.scan_mode = payload.scan_mode
-    library.scan_config = normalize_scan_config(payload.scan_mode, payload.scan_config)
+    if payload.name is not None:
+        next_name = payload.name.strip()
+        if not next_name:
+            raise ValueError("Library name must not be empty")
+        library.name = next_name
+
+    if payload.scan_mode is not None:
+        library.scan_mode = payload.scan_mode
+        library.scan_config = normalize_scan_config(payload.scan_mode, payload.scan_config)
     db.commit()
     db.refresh(library)
+    stats_cache.invalidate(cache_key, library.id)
     return library
 
 
 def delete_library(db: Session, library_id: int) -> bool:
-    library = db.get(Library, library_id)
-    if library is None:
+    cache_key = str(id(db.get_bind()))
+    existing = db.scalar(select(Library.id).where(Library.id == library_id))
+    if existing is None:
         return False
-    db.delete(library)
+
+    media_file_ids = select(MediaFile.id).where(MediaFile.library_id == library_id)
+    db.execute(delete(ExternalSubtitle).where(ExternalSubtitle.media_file_id.in_(media_file_ids)))
+    db.execute(delete(SubtitleStream).where(SubtitleStream.media_file_id.in_(media_file_ids)))
+    db.execute(delete(AudioStream).where(AudioStream.media_file_id.in_(media_file_ids)))
+    db.execute(delete(VideoStream).where(VideoStream.media_file_id.in_(media_file_ids)))
+    db.execute(delete(MediaFormat).where(MediaFormat.media_file_id.in_(media_file_ids)))
+    db.execute(delete(MediaFile).where(MediaFile.library_id == library_id))
+    db.execute(delete(ScanJob).where(ScanJob.library_id == library_id))
+    db.execute(delete(Library).where(Library.id == library_id))
     db.commit()
+    stats_cache.invalidate(cache_key, library_id)
     return True
 
 
@@ -111,6 +144,11 @@ def _library_aggregate_map(db: Session) -> dict[int, dict[str, int | float]]:
 
 
 def list_libraries(db: Session) -> list[LibrarySummary]:
+    cache_key = str(id(db.get_bind()))
+    cached = stats_cache.get_libraries(cache_key)
+    if cached is not None:
+        return cached
+
     libraries = db.scalars(select(Library).order_by(Library.name.asc())).all()
     aggregates = _library_aggregate_map(db)
     result: list[LibrarySummary] = []
@@ -119,10 +157,16 @@ def list_libraries(db: Session) -> list[LibrarySummary]:
         for key, value in aggregates.get(library.id, {}).items():
             setattr(summary, key, value)
         result.append(summary)
+    stats_cache.set_libraries(cache_key, result)
     return result
 
 
 def get_library_detail(db: Session, library_id: int) -> LibraryDetail | None:
+    cache_key = str(id(db.get_bind()))
+    cached = stats_cache.get_library_detail(cache_key, library_id)
+    if cached is not None:
+        return cached
+
     library = db.get(Library, library_id)
     if not library:
         return None
@@ -180,7 +224,7 @@ def get_library_detail(db: Session, library_id: int) -> LibraryDetail | None:
     ):
         subtitle_counts[language] += count
 
-    return LibraryDetail(
+    payload = LibraryDetail(
         **summary.model_dump(),
         video_codec_distribution=[{"label": key or "unknown", "value": value} for key, value in video_codec_distribution],
         resolution_distribution=[
@@ -197,3 +241,5 @@ def get_library_detail(db: Session, library_id: int) -> LibraryDetail | None:
             for key, value in sorted(subtitle_counts.items(), key=lambda item: item[1], reverse=True)
         ],
     )
+    stats_cache.set_library_detail(cache_key, library_id, payload)
+    return payload

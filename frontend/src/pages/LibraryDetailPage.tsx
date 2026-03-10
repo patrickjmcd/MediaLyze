@@ -5,6 +5,7 @@ import { Link, useParams } from "react-router-dom";
 
 import { AsyncPanel } from "../components/AsyncPanel";
 import { DistributionList } from "../components/DistributionList";
+import { LoaderPinwheelIcon } from "../components/LoaderPinwheelIcon";
 import { StatCard } from "../components/StatCard";
 import { api, type LibraryDetail, type MediaFileRow, type ScanJob } from "../lib/api";
 import { formatBytes, formatDate, formatDuration } from "../lib/format";
@@ -44,6 +45,24 @@ const DEFAULT_VISIBLE_COLUMNS: FileColumnKey[] = [
   "subtitle_languages",
   "quality_score",
 ];
+
+const libraryDetailCache = new Map<string, LibraryDetail>();
+const libraryFilesCache = new Map<string, MediaFileRow[]>();
+const libraryScanHistoryCache = new Map<string, ScanJob[]>();
+
+function renderActiveJobDetail(t: (key: string, options?: Record<string, unknown>) => string, job: ScanJob): string {
+  if (job.phase_label === "Discovering files") {
+    return t("scanBanner.searchingFound", { count: job.files_total });
+  }
+  if (job.phase_label === "Analyzing media" && job.files_total > 0) {
+    return t("scanBanner.analyzingProgress", {
+      scanned: job.files_scanned,
+      total: job.files_total,
+      percent: Math.round((job.files_scanned / job.files_total) * 100),
+    });
+  }
+  return job.phase_detail ?? job.phase_label;
+}
 
 function joinValues(values: string[]): string {
   return values.length > 0 ? values.join(", ") : "n/a";
@@ -222,6 +241,7 @@ export function LibraryDetailPage() {
   const [files, setFiles] = useState<MediaFileRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [scanHistory, setScanHistory] = useState<ScanJob[]>([]);
+  const [isFilesLoading, setIsFilesLoading] = useState(true);
   const [visibleColumns, setVisibleColumns] = useState<FileColumnKey[]>(DEFAULT_VISIBLE_COLUMNS);
   const [sortKey, setSortKey] = useState<FileColumnKey>("file");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
@@ -316,26 +336,47 @@ export function LibraryDetailPage() {
     setSortDirection(nextKey === "quality_score" ? "desc" : "asc");
   }
 
-  function loadPage() {
+  function loadPage(showFilesLoading = false) {
+    if (showFilesLoading) {
+      setIsFilesLoading(true);
+    }
     Promise.all([api.library(libraryId), api.libraryFiles(libraryId), api.libraryScanJobs(libraryId)])
       .then(([libraryPayload, filesPayload, scanJobsPayload]) => {
+        libraryDetailCache.set(libraryId, libraryPayload);
+        libraryFilesCache.set(libraryId, filesPayload);
+        libraryScanHistoryCache.set(libraryId, scanJobsPayload);
         setLibrary(libraryPayload);
         setFiles(filesPayload);
         setScanHistory(scanJobsPayload);
         setError(null);
       })
-      .catch((reason: Error) => setError(reason.message));
+      .catch((reason: Error) => setError(reason.message))
+      .finally(() => {
+        if (showFilesLoading) {
+          setIsFilesLoading(false);
+        }
+      });
   }
 
   useEffect(() => {
-    loadPage();
+    const cachedLibrary = libraryDetailCache.get(libraryId) ?? null;
+    const cachedFiles = libraryFilesCache.get(libraryId) ?? null;
+    const cachedScanHistory = libraryScanHistoryCache.get(libraryId) ?? [];
+
+    setLibrary(cachedLibrary);
+    setFiles(cachedFiles ?? []);
+    setScanHistory(cachedScanHistory);
+    setError(null);
+    setIsFilesLoading(cachedFiles === null);
+
+    loadPage(cachedFiles === null);
   }, [libraryId]);
 
   useEffect(() => {
     if (!hasActiveJobs) {
       return;
     }
-    const timer = window.setInterval(loadPage, 3000);
+    const timer = window.setInterval(() => loadPage(false), 3000);
     return () => window.clearInterval(timer);
   }, [hasActiveJobs, libraryId]);
 
@@ -346,7 +387,7 @@ export function LibraryDetailPage() {
           <div className="notice">
             <div className="distribution-copy">
               <strong>{t("libraryDetail.scanInProgress")}</strong>
-              <span>{activeJob.phase_detail ?? activeJob.phase_label}</span>
+              <span>{renderActiveJobDetail(t, activeJob)}</span>
             </div>
             <div className="progress">
               <span style={{ width: `${activeJob.progress_percent}%` }} />
@@ -475,7 +516,12 @@ export function LibraryDetailPage() {
             })}
           </div>
         </div>
-        {sortedFiles.length === 0 ? (
+        {isFilesLoading ? (
+          <div className="panel-loader">
+            <LoaderPinwheelIcon className="panel-loader-icon" size={30} />
+            <span>{t("libraryDetail.loadingFiles")}</span>
+          </div>
+        ) : sortedFiles.length === 0 ? (
           <div className="notice">{t("libraryDetail.noAnalyzedFiles")}</div>
         ) : (
           <div className="data-table-shell">

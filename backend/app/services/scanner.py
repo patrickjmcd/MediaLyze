@@ -25,6 +25,7 @@ from backend.app.models.entities import (
 )
 from backend.app.services.ffprobe_parser import normalize_ffprobe_payload, run_ffprobe
 from backend.app.services.quality import calculate_quality_score
+from backend.app.services.stats_cache import stats_cache
 from backend.app.services.subtitles import detect_external_subtitles
 from backend.app.utils.time import utc_now
 
@@ -190,6 +191,7 @@ def run_scan(
     scan_type: str = "incremental",
     existing_job: ScanJob | None = None,
 ) -> ScanJob:
+    cache_key = str(id(db.get_bind()))
     library = db.get(Library, library_id)
     if not library:
         raise ValueError(f"Library {library_id} not found")
@@ -230,6 +232,7 @@ def run_scan(
         if discovery_counter >= settings.scan_discovery_batch_size:
             job.files_total = len(seen_relative_paths)
             db.commit()
+            stats_cache.invalidate(cache_key, job.library_id)
             discovery_counter = 0
             if _should_cancel():
                 raise ScanCanceled()
@@ -269,6 +272,7 @@ def run_scan(
 
     job.files_total = len(discovered)
     db.commit()
+    stats_cache.invalidate(cache_key, job.library_id)
     if _should_cancel():
         raise ScanCanceled()
 
@@ -316,6 +320,7 @@ def run_scan(
                 batch_counter += 1
                 if batch_counter >= settings.scan_commit_batch_size:
                     db.commit()
+                    stats_cache.invalidate(cache_key, job.library_id)
                     batch_counter = 0
 
                 if next_index < len(to_analyze):
@@ -325,6 +330,7 @@ def run_scan(
 
         if batch_counter:
             db.commit()
+            stats_cache.invalidate(cache_key, job.library_id)
 
     if _should_cancel():
         raise ScanCanceled()
@@ -332,5 +338,6 @@ def run_scan(
     job.status = JobStatus.failed if job.errors else JobStatus.completed
     job.finished_at = utc_now()
     db.commit()
+    stats_cache.invalidate(cache_key, job.library_id)
     db.refresh(job)
     return job

@@ -2,10 +2,25 @@ import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { House, RefreshCwOff, Settings } from "lucide-react";
+import { motion } from "motion/react";
 
 import { AnimatedSearchIcon } from "./AnimatedSearchIcon";
-import { api, type LibrarySummary } from "../lib/api";
+import { api, type LibrarySummary, type ScanJob } from "../lib/api";
 import { useScanJobs } from "../lib/scan-jobs";
+
+function renderActiveJobDetail(t: (key: string, options?: Record<string, unknown>) => string, job: ScanJob): string {
+  if (job.phase_label === "Discovering files") {
+    return t("scanBanner.searchingFound", { count: job.files_total });
+  }
+  if (job.phase_label === "Analyzing media" && job.files_total > 0) {
+    return t("scanBanner.analyzingProgress", {
+      scanned: job.files_scanned,
+      total: job.files_total,
+      percent: Math.round((job.files_scanned / job.files_total) * 100),
+    });
+  }
+  return job.phase_detail ?? job.phase_label;
+}
 
 export function AppShell() {
   const { t } = useTranslation();
@@ -55,7 +70,14 @@ export function AppShell() {
                 aria-label={t("nav.homeAria")}
                 className={({ isActive }) => `icon-nav-button ${isActive ? "active" : ""}`.trim()}
               >
-                <House aria-hidden="true" className="nav-icon" />
+                {({ isActive }) => (
+                  <>
+                    {isActive ? <motion.span layoutId="primary-nav-pill" className="nav-active-pill" /> : null}
+                    <span className="nav-link-content">
+                      <House aria-hidden="true" className="nav-icon" />
+                    </span>
+                  </>
+                )}
               </NavLink>
               <NavLink
                 to="/libraries"
@@ -63,7 +85,14 @@ export function AppShell() {
                 aria-label={t("nav.settingsAria")}
                 className={({ isActive }) => `icon-nav-button ${isActive ? "active" : ""}`.trim()}
               >
-                <Settings aria-hidden="true" className="nav-icon" />
+                {({ isActive }) => (
+                  <>
+                    {isActive ? <motion.span layoutId="primary-nav-pill" className="nav-active-pill" /> : null}
+                    <span className="nav-link-content">
+                      <Settings aria-hidden="true" className="nav-icon" />
+                    </span>
+                  </>
+                )}
               </NavLink>
             </div>
             <div className="media-nav-libraries">
@@ -73,7 +102,12 @@ export function AppShell() {
                   to={`/libraries/${library.id}`}
                   className={({ isActive }) => `library-nav-link ${isActive ? "active" : ""}`.trim()}
                 >
-                  {library.name}
+                  {({ isActive }) => (
+                    <>
+                      {isActive ? <motion.span layoutId="library-nav-pill" className="nav-active-pill" /> : null}
+                      <span className="nav-link-content">{library.name}</span>
+                    </>
+                  )}
                 </NavLink>
               ))}
             </div>
@@ -108,7 +142,7 @@ export function AppShell() {
                 <div className="scan-banner-job" key={job.id}>
                   <div className="distribution-copy">
                     <strong>{job.library_name ?? t("scanBanner.libraryFallback", { id: job.library_id })}</strong>
-                    <span>{job.phase_detail ?? job.phase_label}</span>
+                    <span>{renderActiveJobDetail(t, job)}</span>
                   </div>
                   <div className="progress">
                     <span style={{ width: `${job.progress_percent}%` }} />

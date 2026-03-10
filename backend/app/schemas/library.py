@@ -14,7 +14,8 @@ class LibraryCreate(BaseModel):
 
 
 class LibraryUpdate(BaseModel):
-    scan_mode: ScanMode
+    name: str | None = None
+    scan_mode: ScanMode | None = None
     scan_config: dict = Field(default_factory=dict)
 
 

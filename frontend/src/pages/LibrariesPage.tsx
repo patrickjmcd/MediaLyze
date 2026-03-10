@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { Trash2 } from "lucide-react";
+import { Pencil, Trash2 } from "lucide-react";
 
 import { AsyncPanel } from "../components/AsyncPanel";
 import { PathBrowser } from "../components/PathBrowser";
@@ -199,6 +199,28 @@ export function LibrariesPage() {
     }
   }
 
+  async function renameLibrary(library: LibrarySummary) {
+    const nextName = window.prompt(t("libraries.renamePrompt"), library.name);
+    if (nextName === null) {
+      return;
+    }
+
+    const trimmedName = nextName.trim();
+    if (!trimmedName || trimmedName === library.name) {
+      return;
+    }
+
+    try {
+      const updated = await api.updateLibrarySettings(library.id, { name: trimmedName });
+      setLibraries((currentLibraries) =>
+        currentLibraries.map((entry) => (entry.id === library.id ? updated : entry)),
+      );
+      setLibraryMessages((messages) => ({ ...messages, [library.id]: null }));
+    } catch (reason) {
+      setLibraryMessages((messages) => ({ ...messages, [library.id]: (reason as Error).message }));
+    }
+  }
+
   async function removeLibrary(libraryId: number) {
     try {
       await api.deleteLibrary(libraryId);
@@ -248,6 +270,15 @@ export function LibrariesPage() {
                           </Link>
                         </h3>
                         <div className="library-title-actions">
+                          <button
+                            type="button"
+                            className="secondary icon-only-button"
+                            aria-label={t("libraries.renameAria", { name: library.name })}
+                            title={t("libraries.renameAria", { name: library.name })}
+                            onClick={() => void renameLibrary(library)}
+                          >
+                            <Pencil aria-hidden="true" className="nav-icon" />
+                          </button>
                           <button
                             type="button"
                             className="secondary icon-only-button"

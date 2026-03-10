@@ -11,6 +11,8 @@
   },
   "scanBanner": {
     "running": "Scan läuft...",
+    "searchingFound": "Suche... ({{count}})",
+    "analyzingProgress": "{{scanned}}/{{total}} ~ {{percent}}% analysiert",
     "libraryFallback": "Bibliothek #{{id}}",
     "stopAria": "Aktive Scans stoppen"
   },
@@ -23,7 +25,8 @@
     "videoCodecs": "Video-Codecs",
     "resolutions": "Auflösungen",
     "hdrCoverage": "HDR-Abdeckung",
-    "subtitleSources": "Untertitelquellen"
+    "audioLanguages": "Audio-Sprachen",
+    "subtitleSources": "Untertitel-Sprachen"
   },
   "libraries": {
     "configured": "Konfigurierte Bibliotheken",
@@ -39,6 +42,8 @@
     "intervalMinutes": "Intervall in Minuten",
     "debounceSeconds": "Debounce in Sekunden",
     "scanNow": "Manueller Scan",
+    "renamePrompt": "Neuen Bibliotheksnamen eingeben",
+    "renameAria": "Bibliothek {{name}} umbenennen",
     "deleteAria": "Bibliothek {{name}} löschen",
     "lastScan": "Letzter Scan",
     "files": "Dateien",
@@ -80,6 +85,7 @@
     "indexedEntriesFiltered": "{{shown}} von {{total}} indizierten Einträgen",
     "searchLabel": "Dateien und Metadaten durchsuchen",
     "searchPlaceholder": "Dateien und Metadaten suchen",
+    "loadingFiles": "Analysierte Dateien werden geladen…",
     "noAnalyzedFiles": "Noch keine analysierten Dateien.",
     "recentScanJobs": "Letzte Scan-Jobs",
     "recentScanJobsSubtitle": "Neueste Queue- und Laufhistorie",

@@ -66,10 +66,12 @@ class Library(TimestampMixin, Base):
     media_files: Mapped[list[MediaFile]] = relationship(
         back_populates="library",
         cascade="all, delete-orphan",
+        passive_deletes=True,
     )
     scan_jobs: Mapped[list[ScanJob]] = relationship(
         back_populates="library",
         cascade="all, delete-orphan",
+        passive_deletes=True,
     )
 
 
@@ -103,22 +105,27 @@ class MediaFile(Base):
         back_populates="media_file",
         cascade="all, delete-orphan",
         uselist=False,
+        passive_deletes=True,
     )
     video_streams: Mapped[list[VideoStream]] = relationship(
         back_populates="media_file",
         cascade="all, delete-orphan",
+        passive_deletes=True,
     )
     audio_streams: Mapped[list[AudioStream]] = relationship(
         back_populates="media_file",
         cascade="all, delete-orphan",
+        passive_deletes=True,
     )
     subtitle_streams: Mapped[list[SubtitleStream]] = relationship(
         back_populates="media_file",
         cascade="all, delete-orphan",
+        passive_deletes=True,
     )
     external_subtitles: Mapped[list[ExternalSubtitle]] = relationship(
         back_populates="media_file",
         cascade="all, delete-orphan",
+        passive_deletes=True,
     )
 
 
