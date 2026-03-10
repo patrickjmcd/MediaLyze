@@ -107,7 +107,10 @@ def library_update(
     db: Session = Depends(get_db_session),
     runtime: ScanRuntimeManager = Depends(get_scan_runtime),
 ) -> LibrarySummary:
-    library = update_library_settings(db, library_id, payload)
+    try:
+        library = update_library_settings(db, library_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if library is None:
         raise HTTPException(status_code=404, detail="Library not found")
 

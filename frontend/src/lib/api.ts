@@ -149,8 +149,9 @@ export const api = {
   updateLibrarySettings: (
     libraryId: string | number,
     payload: {
-      scan_mode: string;
-      scan_config: Record<string, number>;
+      name?: string;
+      scan_mode?: string;
+      scan_config?: Record<string, number>;
     },
   ) =>
     request<LibrarySummary>(`/libraries/${libraryId}`, {

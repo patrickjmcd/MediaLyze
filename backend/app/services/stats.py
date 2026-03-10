@@ -14,6 +14,7 @@ from backend.app.models.entities import (
 )
 from backend.app.schemas.media import DashboardResponse, DistributionItem
 from backend.app.services.languages import merge_language_counts
+from backend.app.services.stats_cache import stats_cache
 from backend.app.services.video_queries import primary_video_streams_subquery
 
 
@@ -32,6 +33,11 @@ def _resolution_label(width: int | None, height: int | None) -> str:
 
 
 def build_dashboard(db: Session) -> DashboardResponse:
+    cache_key = str(id(db.get_bind()))
+    cached = stats_cache.get_dashboard(cache_key)
+    if cached is not None:
+        return cached
+
     primary_video_streams = primary_video_streams_subquery()
     totals = {
         "libraries": db.scalar(select(func.count(Library.id))) or 0,
@@ -73,10 +79,13 @@ def build_dashboard(db: Session) -> DashboardResponse:
         .order_by(func.count(AudioStream.id).desc())
     ).all()
 
-    internal_subtitles = db.scalar(select(func.count(SubtitleStream.id))) or 0
-    external_subtitles = db.scalar(select(func.count(ExternalSubtitle.id))) or 0
+    subtitle_language_rows = merge_language_counts(
+        db.execute(select(SubtitleStream.language, func.count(SubtitleStream.id)).group_by(SubtitleStream.language)).all()
+        + db.execute(select(ExternalSubtitle.language, func.count(ExternalSubtitle.id)).group_by(ExternalSubtitle.language)).all(),
+        fallback="und",
+    )
 
-    return DashboardResponse(
+    payload = DashboardResponse(
         totals=totals,
         video_codec_distribution=_distribution(video_codec_rows),
         resolution_distribution=[
@@ -90,7 +99,9 @@ def build_dashboard(db: Session) -> DashboardResponse:
             for label, value in merge_language_counts(audio_language_rows, fallback="und")
         ],
         subtitle_distribution=[
-            DistributionItem(label="internal", value=internal_subtitles),
-            DistributionItem(label="external", value=external_subtitles),
+            DistributionItem(label=label, value=value)
+            for label, value in subtitle_language_rows
         ],
     )
+    stats_cache.set_dashboard(cache_key, payload)
+    return payload

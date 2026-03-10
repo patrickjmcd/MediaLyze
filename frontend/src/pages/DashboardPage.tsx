@@ -84,8 +84,17 @@ export function DashboardPage() {
         <AsyncPanel title={t("dashboard.hdrCoverage")} loading={!dashboard && !error} error={error}>
           <DistributionList items={dashboard?.hdr_distribution ?? []} />
         </AsyncPanel>
-        <AsyncPanel title={t("dashboard.subtitleSources")} loading={!dashboard && !error} error={error}>
-          <DistributionList items={dashboard?.subtitle_distribution ?? []} />
+        <AsyncPanel
+          title={t("dashboard.audioLanguages")}
+          loading={!dashboard && !error}
+          error={error}
+          bodyClassName="async-panel-body-scroll"
+        >
+          <DistributionList
+            items={dashboard?.audio_language_distribution ?? []}
+            maxVisibleRows={5}
+            scrollable
+          />
         </AsyncPanel>
       </div>
     </>
