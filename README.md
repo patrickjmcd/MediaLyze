@@ -1,28 +1,89 @@
 # MediaLyze
 
-MediaLyze is a self-hosted media library analyzer for large video collections. It scans directories below `MEDIA_ROOT`, runs `ffprobe`, stores normalized metadata in SQLite, and exposes a React/FastAPI web UI for technical statistics and file inspection.
+<p align="center">
+  <a href="./LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-yellow.svg"></a>
+  <img alt="Python 3.12" src="https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white">
+  <img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white">
+  <img alt="React 19" src="https://img.shields.io/badge/React-19-149ECA?logo=react&logoColor=white">
+  <img alt="Docker" src="https://img.shields.io/badge/Docker-Single%20Container-2496ED?logo=docker&logoColor=white">
+  <img alt="SQLite" src="https://img.shields.io/badge/SQLite-07405E?logo=sqlite&logoColor=white">
+</p>
+
+<p align="center">
+  Self-hosted media library analysis for large video collections.
+  Scans your libraries and run analyses using <code>ffprobe</code>.
+  Explore technical metadata through a FastAPI + React web UI.
+</p>
+
+<p align="center">
+  MediaLyze focuses (for now) on just analysis, not playback, scraping, or file modification, READ ONLY on your files!
+</p>
+
+![MediaLyze dashboard](docs/images/Dashboard.jpg)
+
+## Why MediaLyze
+
+MediaLyze is built for self-hosted setups that need visibility into large media collections without depending on external services and designed around ffprobe with normalized metadata.
+
+Everything with a simple deployment model: one container, one SQLite database, one UI.
+Bring your own auth (for now).
 
 ## Features
 
-- FastAPI backend with normalized SQLAlchemy models for libraries, media files, formats, streams, subtitles, and scan jobs
-- Incremental and full scans using `path + size + mtime`
-- Defensive `ffprobe` normalization for video, audio, subtitle, HDR, and external subtitle detection
-- SQLite with WAL enabled and indexed filter fields
-- React + Vite frontend with dashboard, libraries, library detail, file detail, and restricted path browser below `MEDIA_ROOT`
-- Dockerized single-container deployment serving API and static frontend from one process
+- Technical media analysis powered by `ffprobe`
+- Full and incremental scans using `path + size + mtime`
+- Normalized formats, streams, subtitles, scan jobs, and quality scores (feel free to suggest improvements)
+- Detection of internal and external subtitle files
+- SQLite with WAL mode and indexed filter fields
+- FastAPI backend with a React + Vite frontend
+- Docker-first deployment with a read-only media mount
 
-## Repository layout
+## Screenshots
 
-```text
-backend/   FastAPI app, DB models, scanner, services
-frontend/  React + Vite application
-tests/     Python tests
-alembic/   Migration scaffolding
-docs/      Additional notes
-docker/    Reserved for future container assets
+<table>
+  <tr>
+    <td><img alt="Dashboard view" src="docs/images/Dashboard.jpg"></td>
+    <td><img alt="Settings view" src="docs/images/Settings.jpg"></td>
+  </tr>
+</table>
+
+## Quick Start
+
+### Run the published image
+
+using docker-compose: 
+[docker-compose-prod.yaml](docker-compose-prod.yaml)
+
+using docker run:
+```bash
+mkdir -p ./config
+
+docker run -d \
+  --name medialyze \
+  -p 8080:8080 \
+  -e TZ=UTC \
+  -v "$(pwd)/config:/config" \
+  -v "/path/to/your/media:/media:ro" \
+  ghcr.io/frederikemmer/medialyze:latest
 ```
 
-## Local development
+Open `http://localhost:8080`.
+
+### Build locally
+
+```bash
+cp .env.example .env
+docker compose up --build
+```
+
+The default container setup mounts:
+
+- `./config` to `/config`
+- `./media` to `/media` as read-only
+
+If you want a different external port, set `HOST_PORT` in `.env`.
+
+## Local Development
 
 ### Backend
 
@@ -43,84 +104,47 @@ npm run dev
 
 The Vite dev server proxies `/api` to `http://127.0.0.1:8080`.
 
-### One-command local start
+## Configuration
 
-For local development without rebuilding Docker images:
-
-```bash
-./scripts/local_start.sh
-```
-
-On Windows PowerShell:
-
-```powershell
-.\scripts\local_start.ps1
-```
-
-Both scripts create `.venv` if needed, install backend/frontend dependencies when manifests changed, and start:
-
-- FastAPI on `http://127.0.0.1:8080`
-- Vite on `http://127.0.0.1:5173`
-
-If a project-level `.env` file exists, both scripts load variables from it first. Explicitly exported environment variables still win, and missing values fall back to the built-in defaults, including `TZ`.
-
-## Environment
-
-Relevant variables:
+Relevant environment variables:
 
 - `CONFIG_PATH`: writable config/data directory, default `/config`
 - `MEDIA_ROOT`: media mount root, default `/media`
 - `HOST_PORT`: HTTP port exposed on the host, default `8080`
-- `APP_PORT`: internal app port, default `8080`; normally no change needed
-- `TZ`: optional process/container timezone like `Europe/Berlin`, default `UTC`
+- `APP_PORT`: internal app port, default `8080`
+- `TZ`: process/container timezone, default `UTC`
 - `FFPROBE_PATH`: optional override for the `ffprobe` binary path
 - `SCAN_RUNTIME_WORKER_COUNT`: maximum number of libraries scanned in parallel, default `4`
 
-`MEDIA_ROOT` must be mounted read-only in production.
+`MEDIA_ROOT` should be mounted read-only in production.
 
-## Docker
+For SMB / NAS setups, the recommended approach is to mount the share on the Docker host first and then point `MEDIA_HOST_DIR` at that host mount path.
 
-```bash
-cp .env.example .env
-docker compose up --build
+## Tech Stack
+
+- Backend: Python, FastAPI, SQLAlchemy, Alembic, SQLite
+- Frontend: React, Vite, TypeScript, i18next
+- Media analysis: `ffprobe` / FFmpeg
+- Scheduling and watch mode: APScheduler, watchdog
+- Packaging: Docker, GHCR
+
+## Repository Layout
+
+```text
+backend/   FastAPI app, database models, scanner, services
+frontend/  React + Vite application
+tests/     Python test suite
+docs/      Project documentation
 ```
 
-Open `http://localhost:8080`.
+## Project Status
 
-If you want a different external port, set `HOST_PORT`, for example `HOST_PORT=8090`.
-The container still listens internally on `8080`, so the effective mapping becomes `8090:8080`.
+MediaLyze is an open-source project under active development. The current focus is technical media analysis for large self-hosted libraries, with the v1 scope centered on scanning, normalization, statistics, and file inspection.
 
-### SMB / NAS shares
+## Contributing
 
-The preferred setup is to mount the SMB/CIFS share on the Docker host and then point `MEDIA_HOST_DIR` at that mount path.
+Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
 
-If you want Docker to mount the share itself, use a named volume with the local driver:
+## License
 
-```yaml
-services:
-  medialyze:
-    volumes:
-      - nas_share:/media:ro
-
-volumes:
-  nas_share:
-    driver: local
-    driver_opts:
-      type: cifs
-      o: "addr=my-nas,username=myuser,password=mypassword,vers=3.0,ro,file_mode=0444,dir_mode=0555"
-      device: "//my-nas/share"
-```
-
-The raw example with only `username` and `password` often works, but adding `addr=` and `vers=` makes CIFS mounts much more predictable across Docker hosts.
-
-## Current assumptions
-
-- The first functional version stores the raw `ffprobe` JSON per file for diagnostics.
-- Scheduled scans and watch mode can be configured per library in the detail view.
-- Library creation requires an existing directory below `MEDIA_ROOT`.
-
-## Open points
-
-- How aggressive the quality score should be tuned beyond the current codec/resolution/HDR/audio heuristic
-- Which scheduled scan UX and watch-mode controls should be exposed first
-- Whether series-specific episode detection should persist dedicated episode metadata in v1 or remain derived
+This project is licensed under the [MIT License](LICENSE).
