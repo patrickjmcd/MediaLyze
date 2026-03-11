@@ -1,51 +1,35 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { AsyncPanel } from "../components/AsyncPanel";
 import { DistributionList } from "../components/DistributionList";
 import { StatCard } from "../components/StatCard";
-import { api, type DashboardResponse } from "../lib/api";
+import { useAppData } from "../lib/app-data";
 import { formatBytes, formatDuration } from "../lib/format";
 import { useScanJobs } from "../lib/scan-jobs";
 
 export function DashboardPage() {
   const { t } = useTranslation();
-  const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
+  const { dashboard, dashboardLoaded, loadDashboard } = useAppData();
   const [error, setError] = useState<string | null>(null);
   const { hasActiveJobs } = useScanJobs();
+  const hadActiveJobsRef = useRef(hasActiveJobs);
 
   useEffect(() => {
-    let cancelled = false;
-
-    const loadDashboard = () => {
-      api
-        .dashboard()
-        .then((payload) => {
-          if (!cancelled) {
-            setDashboard(payload);
-            setError(null);
-          }
-        })
-        .catch((reason: Error) => {
-          if (!cancelled) {
-            setError(reason.message);
-          }
-        });
-    };
-
-    loadDashboard();
-    if (!hasActiveJobs) {
-      return () => {
-        cancelled = true;
-      };
+    if (dashboardLoaded) {
+      return;
     }
+    loadDashboard().catch((reason: Error) => setError(reason.message));
+  }, [dashboardLoaded, loadDashboard]);
 
-    const timer = window.setInterval(loadDashboard, 3000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [hasActiveJobs]);
+  useEffect(() => {
+    if (hadActiveJobsRef.current && !hasActiveJobs) {
+      loadDashboard(true)
+        .then(() => setError(null))
+        .catch((reason: Error) => setError(reason.message));
+    }
+    hadActiveJobsRef.current = hasActiveJobs;
+  }, [hasActiveJobs, loadDashboard]);
 
   return (
     <>

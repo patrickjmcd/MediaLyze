@@ -1,3 +1,5 @@
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
@@ -5,7 +7,7 @@ from backend.app.api.deps import get_app_settings, get_db_session, get_scan_runt
 from backend.app.core.config import Settings
 from backend.app.schemas.browse import BrowseResponse
 from backend.app.schemas.library import LibraryCreate, LibraryDetail, LibrarySummary, LibraryUpdate
-from backend.app.schemas.media import DashboardResponse, MediaFileDetail, MediaFileTableRow
+from backend.app.schemas.media import DashboardResponse, MediaFileDetail, MediaFileTablePage
 from backend.app.schemas.scan import ScanCancelResponse, ScanJobRead, ScanRequest
 from backend.app.models.entities import ScanJob
 from backend.app.services.browse import browse_media_root
@@ -137,9 +139,39 @@ def library_delete(
     runtime.sync_library(library_id, library=None)
 
 
-@router.get("/libraries/{library_id}/files", response_model=list[MediaFileTableRow])
-def library_files(library_id: int, db: Session = Depends(get_db_session)) -> list[MediaFileTableRow]:
-    return list_library_files(db, library_id)
+@router.get("/libraries/{library_id}/files", response_model=MediaFileTablePage)
+def library_files(
+    library_id: int,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+    search: str = Query(default="", max_length=200),
+    sort_key: Literal[
+        "file",
+        "size",
+        "video_codec",
+        "resolution",
+        "hdr_type",
+        "duration",
+        "audio_languages",
+        "subtitle_languages",
+        "mtime",
+        "last_analyzed_at",
+        "quality_score",
+    ] = Query(default="file"),
+    sort_direction: Literal["asc", "desc"] = Query(default="asc"),
+    db: Session = Depends(get_db_session),
+) -> MediaFileTablePage:
+    if get_library_detail(db, library_id) is None:
+        raise HTTPException(status_code=404, detail="Library not found")
+    return list_library_files(
+        db,
+        library_id,
+        offset=offset,
+        limit=limit,
+        search=search,
+        sort_key=sort_key,
+        sort_direction=sort_direction,
+    )
 
 
 @router.post("/libraries/{library_id}/scan", response_model=ScanJobRead, status_code=202)

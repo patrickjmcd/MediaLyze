@@ -5,6 +5,7 @@ import { Pencil, Trash2 } from "lucide-react";
 
 import { AsyncPanel } from "../components/AsyncPanel";
 import { PathBrowser } from "../components/PathBrowser";
+import { useAppData } from "../lib/app-data";
 import { api, type LibrarySummary } from "../lib/api";
 import { formatBytes, formatDate, formatDuration } from "../lib/format";
 import { useScanJobs } from "../lib/scan-jobs";
@@ -54,7 +55,7 @@ function settingsMatchLibrary(library: LibrarySummary, settings: LibrarySettings
 
 export function LibrariesPage() {
   const { t, i18n } = useTranslation();
-  const [libraries, setLibraries] = useState<LibrarySummary[]>([]);
+  const { libraries, librariesLoaded, loadLibraries, upsertLibrary, removeLibrary: removeLibraryFromStore } = useAppData();
   const [isLoadingLibraries, setIsLoadingLibraries] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -64,27 +65,21 @@ export function LibrariesPage() {
   const [libraryMessages, setLibraryMessages] = useState<Record<number, string | null>>({});
   const [form, setForm] = useState(EMPTY_FORM);
   const { activeJobs, hasActiveJobs, refresh } = useScanJobs();
+  const hadActiveJobsRef = useRef(hasActiveJobs);
 
-  const loadLibraries = (showLoading = false) => {
+  const refreshLibraries = (showLoading = false, force = false) => {
     if (showLoading) {
       setIsLoadingLibraries(true);
     }
-    api
-      .libraries()
+    return loadLibraries(force)
       .then((payload) => {
-        setLibraries(payload);
-        setSettingsForms((current) => {
-          const next = { ...current };
-          for (const library of payload) {
-            if (!next[library.id] || settingsMatchLibrary(library, next[library.id])) {
-              next[library.id] = toLibrarySettingsForm(library);
-            }
-          }
-          return next;
-        });
         setError(null);
+        return payload;
       })
-      .catch((reason: Error) => setError(reason.message))
+      .catch((reason: Error) => {
+        setError(reason.message);
+        throw reason;
+      })
       .finally(() => {
         if (showLoading) {
           setIsLoadingLibraries(false);
@@ -93,15 +88,30 @@ export function LibrariesPage() {
   };
 
   useEffect(() => {
-    loadLibraries(true);
-  }, []);
-
-  useEffect(() => {
-    if (!hasActiveJobs) {
+    if (librariesLoaded) {
+      setIsLoadingLibraries(false);
       return;
     }
-    const timer = window.setInterval(() => loadLibraries(false), 3000);
-    return () => window.clearInterval(timer);
+    void refreshLibraries(true).catch(() => undefined);
+  }, [librariesLoaded]);
+
+  useEffect(() => {
+    setSettingsForms((current) => {
+      const next = { ...current };
+      for (const library of libraries) {
+        if (!next[library.id] || settingsMatchLibrary(library, next[library.id])) {
+          next[library.id] = toLibrarySettingsForm(library);
+        }
+      }
+      return next;
+    });
+  }, [libraries]);
+
+  useEffect(() => {
+    if (hadActiveJobsRef.current && !hasActiveJobs) {
+      void refreshLibraries(false, true).catch(() => undefined);
+    }
+    hadActiveJobsRef.current = hasActiveJobs;
   }, [hasActiveJobs]);
 
   useEffect(() => {
@@ -116,10 +126,10 @@ export function LibrariesPage() {
     event.preventDefault();
     setSubmitting(true);
     try {
-      await api.createLibrary(form);
+      const created = await api.createLibrary(form);
+      upsertLibrary(created);
       setForm(EMPTY_FORM);
       setSubmitError(null);
-      loadLibraries(false);
     } catch (reason) {
       setSubmitError((reason as Error).message);
     } finally {
@@ -153,9 +163,7 @@ export function LibrariesPage() {
           scan_mode: next.scan_mode,
           scan_config: buildScanConfig(next),
         });
-        setLibraries((currentLibraries) =>
-          currentLibraries.map((library) => (library.id === libraryId ? updated : library)),
-        );
+        upsertLibrary(updated);
         setSettingsForms((forms) => ({
           ...forms,
           [libraryId]: toLibrarySettingsForm(updated),
@@ -179,9 +187,7 @@ export function LibrariesPage() {
           scan_mode: current.scan_mode,
           scan_config: buildScanConfig(current),
         });
-        setLibraries((currentLibraries) =>
-          currentLibraries.map((library) => (library.id === libraryId ? updated : library)),
-        );
+        upsertLibrary(updated);
       } catch (reason) {
         setLibraryMessages((messages) => ({ ...messages, [libraryId]: (reason as Error).message }));
         return;
@@ -192,7 +198,6 @@ export function LibrariesPage() {
       await api.scanLibrary(libraryId, "incremental");
       setLibraryMessages((messages) => ({ ...messages, [libraryId]: null }));
       await refresh();
-      loadLibraries(false);
     } catch (reason) {
       setLibraryMessages((messages) => ({ ...messages, [libraryId]: (reason as Error).message }));
       return;
@@ -212,9 +217,7 @@ export function LibrariesPage() {
 
     try {
       const updated = await api.updateLibrarySettings(library.id, { name: trimmedName });
-      setLibraries((currentLibraries) =>
-        currentLibraries.map((entry) => (entry.id === library.id ? updated : entry)),
-      );
+      upsertLibrary(updated);
       setLibraryMessages((messages) => ({ ...messages, [library.id]: null }));
     } catch (reason) {
       setLibraryMessages((messages) => ({ ...messages, [library.id]: (reason as Error).message }));
@@ -224,7 +227,7 @@ export function LibrariesPage() {
   async function removeLibrary(libraryId: number) {
     try {
       await api.deleteLibrary(libraryId);
-      setLibraries((currentLibraries) => currentLibraries.filter((library) => library.id !== libraryId));
+      removeLibraryFromStore(libraryId);
       setSettingsForms((currentForms) => {
         const next = { ...currentForms };
         delete next[libraryId];

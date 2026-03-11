@@ -140,6 +140,26 @@ def normalize_language_hint(value: str | None) -> str | None:
     return _known_language_alias(value)
 
 
+def expand_language_search_terms(value: str | None) -> set[str]:
+    if value is None:
+        return set()
+
+    candidate = value.strip().lower()
+    if not candidate:
+        return set()
+
+    terms = {candidate}
+    normalized = normalize_language_hint(candidate) or normalize_language_code(candidate)
+    if normalized is None:
+        return terms
+
+    terms.add(normalized)
+    for alias, mapped in LANGUAGE_ALIASES.items():
+        if mapped == normalized:
+            terms.add(alias)
+    return terms
+
+
 def merge_language_counts(
     rows: list[tuple[str | None, int]] | tuple[tuple[str | None, int], ...],
     *,
