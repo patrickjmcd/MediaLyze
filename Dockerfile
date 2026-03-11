@@ -21,7 +21,7 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-RUN RUN apk add --no-cache
+RUN apk add --no-cache ffmpeg su-exec tzdata
 
 COPY pyproject.toml README.md LICENSE CONTRIBUTING.md ./
 COPY backend ./backend
