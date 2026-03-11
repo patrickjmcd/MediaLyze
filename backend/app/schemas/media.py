@@ -99,6 +99,13 @@ class MediaFileDetail(MediaFileTableRow):
     raw_ffprobe_json: dict[str, Any] | None
 
 
+class MediaFileTablePage(BaseModel):
+    total: int
+    offset: int
+    limit: int
+    items: list[MediaFileTableRow]
+
+
 class DashboardResponse(BaseModel):
     totals: dict[str, int | float]
     video_codec_distribution: list[DistributionItem]

@@ -1,5 +1,13 @@
 import type { ReactNode } from "react";
-import { useDeferredValue, useEffect, useState } from "react";
+import {
+  startTransition,
+  useDeferredValue,
+  useEffect,
+  useEffectEvent,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { Link, useParams } from "react-router-dom";
 
@@ -7,23 +15,12 @@ import { AsyncPanel } from "../components/AsyncPanel";
 import { DistributionList } from "../components/DistributionList";
 import { LoaderPinwheelIcon } from "../components/LoaderPinwheelIcon";
 import { StatCard } from "../components/StatCard";
-import { api, type LibraryDetail, type MediaFileRow, type ScanJob } from "../lib/api";
+import { useAppData } from "../lib/app-data";
+import { api, type LibraryDetail, type LibrarySummary, type MediaFileRow, type MediaFileSortKey, type ScanJob } from "../lib/api";
 import { formatBytes, formatDate, formatDuration } from "../lib/format";
 import { useScanJobs } from "../lib/scan-jobs";
 
-type FileColumnKey =
-  | "file"
-  | "size"
-  | "video_codec"
-  | "resolution"
-  | "hdr_type"
-  | "duration"
-  | "audio_languages"
-  | "subtitle_languages"
-  | "mtime"
-  | "last_analyzed_at"
-  | "quality_score";
-
+type FileColumnKey = MediaFileSortKey;
 type SortDirection = "asc" | "desc";
 
 type FileColumnDefinition = {
@@ -31,8 +28,12 @@ type FileColumnDefinition = {
   labelKey: string;
   sticky?: boolean;
   hideable?: boolean;
-  sortValue: (file: MediaFileRow) => number | string;
   render: (file: MediaFileRow) => ReactNode;
+};
+
+type CachedFileList = {
+  total: number;
+  items: MediaFileRow[];
 };
 
 const DEFAULT_VISIBLE_COLUMNS: FileColumnKey[] = [
@@ -46,23 +47,10 @@ const DEFAULT_VISIBLE_COLUMNS: FileColumnKey[] = [
   "quality_score",
 ];
 
+const PAGE_SIZE = 50;
 const libraryDetailCache = new Map<string, LibraryDetail>();
-const libraryFilesCache = new Map<string, MediaFileRow[]>();
+const libraryFileListCache = new Map<string, CachedFileList>();
 const libraryScanHistoryCache = new Map<string, ScanJob[]>();
-
-function renderActiveJobDetail(t: (key: string, options?: Record<string, unknown>) => string, job: ScanJob): string {
-  if (job.phase_label === "Discovering files") {
-    return t("scanBanner.searchingFound", { count: job.files_total });
-  }
-  if (job.phase_label === "Analyzing media" && job.files_total > 0) {
-    return t("scanBanner.analyzingProgress", {
-      scanned: job.files_scanned,
-      total: job.files_total,
-      percent: Math.round((job.files_scanned / job.files_total) * 100),
-    });
-  }
-  return job.phase_detail ?? job.phase_label;
-}
 
 function joinValues(values: string[]): string {
   return values.length > 0 ? values.join(", ") : "n/a";
@@ -76,27 +64,6 @@ function compactValues(values: string[], limit = 4): string {
   return values.length > limit ? `${visible.join(",")},...` : visible.join(",");
 }
 
-function resolutionSortValue(resolution: string | null): number {
-  if (!resolution) {
-    return -1;
-  }
-  const match = /^(\d+)x(\d+)$/i.exec(resolution);
-  if (!match) {
-    return -1;
-  }
-  const width = Number(match[1]);
-  const height = Number(match[2]);
-  return width * height;
-}
-
-function timeSortValue(value: string | null): number {
-  if (!value) {
-    return 0;
-  }
-  const timestamp = Date.parse(value);
-  return Number.isFinite(timestamp) ? timestamp : 0;
-}
-
 function scoreMeterLabel(score: number): string {
   if (score <= 3) {
     return "low";
@@ -107,44 +74,6 @@ function scoreMeterLabel(score: number): string {
   return "high";
 }
 
-function normalizeSearchValue(value: string): string {
-  return value
-    .toLowerCase()
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim();
-}
-
-function fuzzyIncludes(haystack: string, needle: string): boolean {
-  let index = 0;
-  for (const character of haystack) {
-    if (character === needle[index]) {
-      index += 1;
-      if (index === needle.length) {
-        return true;
-      }
-    }
-  }
-  return needle.length === 0;
-}
-
-function fuzzyScore(text: string, query: string): number {
-  if (!query) {
-    return 0;
-  }
-
-  if (text.includes(query)) {
-    return 200 - Math.max(0, text.indexOf(query));
-  }
-
-  if (fuzzyIncludes(text.replaceAll(" ", ""), query.replaceAll(" ", ""))) {
-    return 120 - Math.max(0, text.length - query.length);
-  }
-
-  return 0;
-}
-
 function buildFileColumns(t: (key: string, options?: Record<string, unknown>) => string): FileColumnDefinition[] {
   return [
     {
@@ -152,7 +81,6 @@ function buildFileColumns(t: (key: string, options?: Record<string, unknown>) =>
       labelKey: "fileTable.file",
       sticky: true,
       hideable: false,
-      sortValue: (file) => file.relative_path.toLowerCase(),
       render: (file) => (
         <div className="media-file-cell">
           <Link to={`/files/${file.id}`} className="file-link">
@@ -164,61 +92,51 @@ function buildFileColumns(t: (key: string, options?: Record<string, unknown>) =>
     {
       key: "size",
       labelKey: "fileTable.size",
-      sortValue: (file) => file.size_bytes,
       render: (file) => formatBytes(file.size_bytes),
     },
     {
       key: "video_codec",
       labelKey: "fileTable.codec",
-      sortValue: (file) => (file.video_codec ?? "").toLowerCase(),
       render: (file) => file.video_codec ?? t("fileTable.na"),
     },
     {
       key: "resolution",
       labelKey: "fileTable.resolution",
-      sortValue: (file) => resolutionSortValue(file.resolution),
       render: (file) => file.resolution ?? t("fileTable.na"),
     },
     {
       key: "hdr_type",
       labelKey: "fileTable.hdr",
-      sortValue: (file) => (file.hdr_type ?? "").toLowerCase(),
       render: (file) => file.hdr_type ?? t("fileTable.sdr"),
     },
     {
       key: "duration",
       labelKey: "fileTable.duration",
-      sortValue: (file) => file.duration ?? 0,
       render: (file) => formatDuration(file.duration),
     },
     {
       key: "audio_languages",
       labelKey: "fileTable.audio",
-      sortValue: (file) => joinValues(file.audio_languages).toLowerCase(),
       render: (file) => compactValues(file.audio_languages),
     },
     {
       key: "subtitle_languages",
       labelKey: "fileTable.subtitles",
-      sortValue: (file) => joinValues(file.subtitle_languages).toLowerCase(),
       render: (file) => compactValues(file.subtitle_languages),
     },
     {
       key: "mtime",
       labelKey: "fileTable.modified",
-      sortValue: (file) => file.mtime,
       render: (file) => formatDate(new Date(file.mtime * 1000).toISOString()),
     },
     {
       key: "last_analyzed_at",
       labelKey: "fileTable.lastAnalyzed",
-      sortValue: (file) => timeSortValue(file.last_analyzed_at),
       render: (file) => formatDate(file.last_analyzed_at),
     },
     {
       key: "quality_score",
       labelKey: "fileTable.score",
-      sortValue: (file) => file.quality_score,
       render: (file) => (
         <div className="score-cell">
           <strong>{file.quality_score}/10</strong>
@@ -234,79 +152,146 @@ function buildFileColumns(t: (key: string, options?: Record<string, unknown>) =>
   ];
 }
 
+function findLibrarySummary(libraries: LibrarySummary[], libraryId: string) {
+  return libraries.find((entry) => String(entry.id) === libraryId) ?? null;
+}
+
+function buildFileCacheKey(
+  libraryId: string,
+  searchQuery: string,
+  sortKey: FileColumnKey,
+  sortDirection: SortDirection,
+) {
+  return `${libraryId}::${searchQuery}::${sortKey}::${sortDirection}`;
+}
+
+function mergeUniqueFiles(current: MediaFileRow[], next: MediaFileRow[]) {
+  const seen = new Set<number>();
+  const merged: MediaFileRow[] = [];
+
+  for (const file of [...current, ...next]) {
+    if (seen.has(file.id)) {
+      continue;
+    }
+    seen.add(file.id);
+    merged.push(file);
+  }
+
+  return merged;
+}
+
 export function LibraryDetailPage() {
   const { t } = useTranslation();
   const { libraryId = "" } = useParams();
+  const { libraries } = useAppData();
   const [library, setLibrary] = useState<LibraryDetail | null>(null);
   const [files, setFiles] = useState<MediaFileRow[]>([]);
+  const [filesTotal, setFilesTotal] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [scanHistory, setScanHistory] = useState<ScanJob[]>([]);
+  const [isLibraryLoading, setIsLibraryLoading] = useState(true);
   const [isFilesLoading, setIsFilesLoading] = useState(true);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [visibleColumns, setVisibleColumns] = useState<FileColumnKey[]>(DEFAULT_VISIBLE_COLUMNS);
   const [sortKey, setSortKey] = useState<FileColumnKey>("file");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [searchQuery, setSearchQuery] = useState("");
-  const { activeJobs, hasActiveJobs } = useScanJobs();
+  const { activeJobs } = useScanJobs();
   const activeJob = activeJobs.find((job) => String(job.library_id) === libraryId) ?? null;
-  const deferredSearchQuery = useDeferredValue(searchQuery);
-  const fileColumns = buildFileColumns(t);
-  const activeColumns = fileColumns.filter((column) => visibleColumns.includes(column.key));
-  const filteredFiles = (() => {
-    const query = normalizeSearchValue(deferredSearchQuery);
-    if (!query) {
-      return files;
+  const hadActiveJobRef = useRef(Boolean(activeJob));
+  const deferredSearchQuery = useDeferredValue(searchQuery.trim());
+  const librarySummary = findLibrarySummary(libraries, libraryId);
+  const displayLibrary = library ?? librarySummary;
+  const fileColumns = useMemo(() => buildFileColumns(t), [t]);
+  const activeColumns = useMemo(
+    () => fileColumns.filter((column) => visibleColumns.includes(column.key)),
+    [fileColumns, visibleColumns],
+  );
+  const fileQueryKey = useMemo(
+    () => buildFileCacheKey(libraryId, deferredSearchQuery, sortKey, sortDirection),
+    [deferredSearchQuery, libraryId, sortDirection, sortKey],
+  );
+  const activeFileQueryKeyRef = useRef(fileQueryKey);
+  const loadMoreSentinelRef = useRef<HTMLDivElement | null>(null);
+  const inflightRequestRef = useRef<string | null>(null);
+  const hasMoreFiles = files.length < filesTotal;
+
+  const loadLibraryDetail = useEffectEvent(async (showLoading = false) => {
+    if (showLoading) {
+      setIsLibraryLoading(true);
     }
 
-    return files
-      .map((file) => {
-        const searchFields = [
-          file.filename,
-          file.relative_path,
-          file.video_codec ?? "",
-          file.resolution ?? "",
-          file.hdr_type ?? "",
-          file.scan_status,
-          file.extension,
-          file.audio_languages.join(" "),
-          file.subtitle_languages.join(" "),
-        ];
-        const score = searchFields.reduce((best, field) => {
-          const normalizedField = normalizeSearchValue(field);
-          return Math.max(best, fuzzyScore(normalizedField, query));
-        }, 0);
-
-        return { file, score };
-      })
-      .filter((entry) => entry.score > 0)
-      .sort((left, right) => right.score - left.score || left.file.relative_path.localeCompare(right.file.relative_path))
-      .map((entry) => entry.file);
-  })();
-  const sortedFiles = [...filteredFiles].sort((left, right) => {
-    const column = fileColumns.find((entry) => entry.key === sortKey);
-    if (!column) {
-      return 0;
+    try {
+      const payload = await api.library(libraryId);
+      libraryDetailCache.set(libraryId, payload);
+      setLibrary(payload);
+      setError(null);
+    } catch (reason) {
+      setError((reason as Error).message);
+    } finally {
+      if (showLoading) {
+        setIsLibraryLoading(false);
+      }
     }
-    const leftValue = column.sortValue(left);
-    const rightValue = column.sortValue(right);
+  });
 
-    let comparison = 0;
-    if (typeof leftValue === "number" && typeof rightValue === "number") {
-      comparison = leftValue - rightValue;
+  const loadScanHistory = useEffectEvent(async () => {
+    try {
+      const payload = await api.libraryScanJobs(libraryId);
+      libraryScanHistoryCache.set(libraryId, payload);
+      setScanHistory(payload);
+      setError(null);
+    } catch (reason) {
+      setError((reason as Error).message);
+    }
+  });
+
+  const loadFilesPage = useEffectEvent(async (offset: number, append: boolean, queryKey: string) => {
+    const requestKey = `${queryKey}:${offset}`;
+    if (inflightRequestRef.current === requestKey) {
+      return;
+    }
+
+    inflightRequestRef.current = requestKey;
+    if (append) {
+      setIsLoadingMore(true);
     } else {
-      comparison = String(leftValue).localeCompare(String(rightValue), undefined, {
-        numeric: true,
-        sensitivity: "base",
-      });
+      setIsFilesLoading(true);
     }
 
-    if (comparison === 0) {
-      comparison = left.relative_path.localeCompare(right.relative_path, undefined, {
-        numeric: true,
-        sensitivity: "base",
+    try {
+      const payload = await api.libraryFiles(libraryId, {
+        offset,
+        limit: PAGE_SIZE,
+        search: deferredSearchQuery,
+        sortKey,
+        sortDirection,
       });
-    }
+      if (activeFileQueryKeyRef.current !== queryKey) {
+        return;
+      }
 
-    return sortDirection === "asc" ? comparison : comparison * -1;
+      const nextItems = append ? mergeUniqueFiles(files, payload.items) : payload.items;
+      libraryFileListCache.set(queryKey, { total: payload.total, items: nextItems });
+      startTransition(() => {
+        setFiles(nextItems);
+        setFilesTotal(payload.total);
+      });
+      setError(null);
+    } catch (reason) {
+      if (activeFileQueryKeyRef.current === queryKey) {
+        setError((reason as Error).message);
+      }
+    } finally {
+      if (inflightRequestRef.current === requestKey) {
+        inflightRequestRef.current = null;
+      }
+      if (append) {
+        setIsLoadingMore(false);
+      } else {
+        setIsFilesLoading(false);
+      }
+    }
   });
 
   function toggleColumn(columnKey: FileColumnKey) {
@@ -314,157 +299,182 @@ export function LibraryDetailPage() {
     if (!column || column.hideable === false) {
       return;
     }
-    setVisibleColumns((current) => {
-      if (current.includes(columnKey)) {
-        if (sortKey === columnKey) {
-          setSortKey("file");
-          setSortDirection("asc");
+
+    startTransition(() => {
+      setVisibleColumns((current) => {
+        if (current.includes(columnKey)) {
+          if (sortKey === columnKey) {
+            setSortKey("file");
+            setSortDirection("asc");
+          }
+          return current.filter((entry) => entry !== columnKey);
         }
-        return current.filter((entry) => entry !== columnKey);
-      }
-      const next = [...current, columnKey];
-      return fileColumns.filter((entry) => next.includes(entry.key)).map((entry) => entry.key);
+
+        const next = [...current, columnKey];
+        return fileColumns.filter((entry) => next.includes(entry.key)).map((entry) => entry.key);
+      });
     });
   }
 
   function updateSort(nextKey: FileColumnKey) {
-    if (sortKey === nextKey) {
-      setSortDirection((current) => (current === "asc" ? "desc" : "asc"));
-      return;
-    }
-    setSortKey(nextKey);
-    setSortDirection(nextKey === "quality_score" ? "desc" : "asc");
+    startTransition(() => {
+      if (sortKey === nextKey) {
+        setSortDirection((current) => (current === "asc" ? "desc" : "asc"));
+        return;
+      }
+
+      setSortKey(nextKey);
+      setSortDirection(nextKey === "quality_score" ? "desc" : "asc");
+    });
   }
 
-  function loadPage(showFilesLoading = false) {
-    if (showFilesLoading) {
-      setIsFilesLoading(true);
-    }
-    Promise.all([api.library(libraryId), api.libraryFiles(libraryId), api.libraryScanJobs(libraryId)])
-      .then(([libraryPayload, filesPayload, scanJobsPayload]) => {
-        libraryDetailCache.set(libraryId, libraryPayload);
-        libraryFilesCache.set(libraryId, filesPayload);
-        libraryScanHistoryCache.set(libraryId, scanJobsPayload);
-        setLibrary(libraryPayload);
-        setFiles(filesPayload);
-        setScanHistory(scanJobsPayload);
-        setError(null);
-      })
-      .catch((reason: Error) => setError(reason.message))
-      .finally(() => {
-        if (showFilesLoading) {
-          setIsFilesLoading(false);
-        }
-      });
-  }
+  useEffect(() => {
+    activeFileQueryKeyRef.current = fileQueryKey;
+  }, [fileQueryKey]);
 
   useEffect(() => {
     const cachedLibrary = libraryDetailCache.get(libraryId) ?? null;
-    const cachedFiles = libraryFilesCache.get(libraryId) ?? null;
     const cachedScanHistory = libraryScanHistoryCache.get(libraryId) ?? [];
 
     setLibrary(cachedLibrary);
-    setFiles(cachedFiles ?? []);
     setScanHistory(cachedScanHistory);
     setError(null);
-    setIsFilesLoading(cachedFiles === null);
+    setIsLibraryLoading(cachedLibrary === null);
 
-    loadPage(cachedFiles === null);
-  }, [libraryId]);
+    void loadLibraryDetail(cachedLibrary === null);
+    void loadScanHistory();
+  }, [libraryId, loadLibraryDetail, loadScanHistory]);
 
   useEffect(() => {
-    if (!hasActiveJobs) {
+    const cachedFiles = libraryFileListCache.get(fileQueryKey);
+
+    setError(null);
+    setIsLoadingMore(false);
+    if (cachedFiles) {
+      setFiles(cachedFiles.items);
+      setFilesTotal(cachedFiles.total);
+      setIsFilesLoading(false);
       return;
     }
-    const timer = window.setInterval(() => loadPage(false), 3000);
-    return () => window.clearInterval(timer);
-  }, [hasActiveJobs, libraryId]);
+
+    setFiles([]);
+    setFilesTotal(0);
+    setIsFilesLoading(true);
+    void loadFilesPage(0, false, fileQueryKey);
+  }, [fileQueryKey, loadFilesPage]);
+
+  useEffect(() => {
+    if (!hasMoreFiles || isFilesLoading || isLoadingMore) {
+      return;
+    }
+
+    const sentinel = loadMoreSentinelRef.current;
+    if (!sentinel) {
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) {
+          return;
+        }
+        void loadFilesPage(files.length, true, fileQueryKey);
+      },
+      {
+        rootMargin: "600px 0px",
+      },
+    );
+
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [fileQueryKey, files.length, hasMoreFiles, isFilesLoading, isLoadingMore, loadFilesPage]);
+
+  useEffect(() => {
+    if (hadActiveJobRef.current && !activeJob) {
+      libraryFileListCache.delete(fileQueryKey);
+      void loadLibraryDetail(false);
+      void loadScanHistory();
+      void loadFilesPage(0, false, fileQueryKey);
+    }
+    hadActiveJobRef.current = Boolean(activeJob);
+  }, [activeJob, fileQueryKey, loadFilesPage, loadLibraryDetail, loadScanHistory]);
 
   return (
     <>
       <section className="panel stack">
         <div className="panel-title-row">
-          <h2>{library?.name ?? t("libraryDetail.loading")}</h2>
-          {library?.path ? (
+          <h2>{displayLibrary?.name ?? t("libraryDetail.loading")}</h2>
+          {displayLibrary?.path ? (
             <span
               className="tooltip-trigger"
               tabIndex={0}
               aria-label={t("libraryDetail.libraryPathAria")}
-              data-tooltip={library.path}
+              data-tooltip={displayLibrary.path}
             >
               ?
             </span>
           ) : null}
         </div>
         <div className="card-grid grid">
-          <StatCard label={t("libraryDetail.files")} value={String(library?.file_count ?? 0)} />
-          <StatCard label={t("libraryDetail.storage")} value={formatBytes(library?.total_size_bytes ?? 0)} tone="teal" />
+          <StatCard label={t("libraryDetail.files")} value={String(displayLibrary?.file_count ?? 0)} />
+          <StatCard
+            label={t("libraryDetail.storage")}
+            value={formatBytes(displayLibrary?.total_size_bytes ?? 0)}
+            tone="teal"
+          />
           <StatCard
             label={t("libraryDetail.duration")}
-            value={formatDuration(library?.total_duration_seconds ?? 0)}
+            value={formatDuration(displayLibrary?.total_duration_seconds ?? 0)}
             tone="blue"
           />
-          <StatCard label={t("libraryDetail.lastScan")} value={formatDate(library?.last_scan_at ?? null)} />
+          <StatCard label={t("libraryDetail.lastScan")} value={formatDate(displayLibrary?.last_scan_at ?? null)} />
         </div>
       </section>
 
       <div className="media-grid">
         <AsyncPanel
           title={t("libraryDetail.videoCodecs")}
-          loading={!library && !error}
+          loading={isLibraryLoading && !library && !error}
           error={error}
           bodyClassName="async-panel-body-scroll"
         >
-          <DistributionList
-            items={library?.video_codec_distribution ?? []}
-            maxVisibleRows={5}
-            scrollable
-          />
+          <DistributionList items={library?.video_codec_distribution ?? []} maxVisibleRows={5} scrollable />
         </AsyncPanel>
         <AsyncPanel
           title={t("libraryDetail.resolutions")}
-          loading={!library && !error}
+          loading={isLibraryLoading && !library && !error}
           error={error}
           bodyClassName="async-panel-body-scroll"
         >
-          <DistributionList
-            items={library?.resolution_distribution ?? []}
-            maxVisibleRows={5}
-            scrollable
-          />
+          <DistributionList items={library?.resolution_distribution ?? []} maxVisibleRows={5} scrollable />
         </AsyncPanel>
         <AsyncPanel
           title={t("libraryDetail.hdrCoverage")}
-          loading={!library && !error}
+          loading={isLibraryLoading && !library && !error}
           error={error}
           bodyClassName="async-panel-body-scroll"
         >
-          <DistributionList
-            items={library?.hdr_distribution ?? []}
-            maxVisibleRows={5}
-            scrollable
-          />
+          <DistributionList items={library?.hdr_distribution ?? []} maxVisibleRows={5} scrollable />
         </AsyncPanel>
         <AsyncPanel
           title={t("libraryDetail.audioLanguages")}
-          loading={!library && !error}
+          loading={isLibraryLoading && !library && !error}
           error={error}
           bodyClassName="async-panel-body-scroll"
         >
-          <DistributionList
-            items={library?.audio_language_distribution ?? []}
-            maxVisibleRows={5}
-            scrollable
-          />
+          <DistributionList items={library?.audio_language_distribution ?? []} maxVisibleRows={5} scrollable />
         </AsyncPanel>
       </div>
 
       <AsyncPanel
         title={t("libraryDetail.analyzedFiles")}
         subtitle={
-          deferredSearchQuery.trim()
-            ? t("libraryDetail.indexedEntriesFiltered", { shown: sortedFiles.length, total: files.length })
-            : t("libraryDetail.indexedEntries", { count: files.length })
+          deferredSearchQuery
+            ? t("libraryDetail.indexedEntriesFiltered", {
+                shown: filesTotal,
+                total: displayLibrary?.file_count ?? filesTotal,
+              })
+            : t("libraryDetail.indexedEntries", { count: filesTotal })
         }
         error={error}
         headerAddon={
@@ -476,7 +486,12 @@ export function LibraryDetailPage() {
               id="library-file-search"
               type="search"
               value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
+              onChange={(event) => {
+                const nextValue = event.target.value;
+                startTransition(() => {
+                  setSearchQuery(nextValue);
+                });
+              }}
               placeholder={t("libraryDetail.searchPlaceholder")}
               autoComplete="off"
             />
@@ -510,7 +525,7 @@ export function LibraryDetailPage() {
             <LoaderPinwheelIcon className="panel-loader-icon" size={30} />
             <span>{t("libraryDetail.loadingFiles")}</span>
           </div>
-        ) : sortedFiles.length === 0 ? (
+        ) : files.length === 0 ? (
           <div className="notice">{t("libraryDetail.noAnalyzedFiles")}</div>
         ) : (
           <div className="data-table-shell">
@@ -533,7 +548,7 @@ export function LibraryDetailPage() {
                 </tr>
               </thead>
               <tbody>
-                {sortedFiles.map((file) => (
+                {files.map((file) => (
                   <tr key={file.id}>
                     {activeColumns.map((column) => (
                       <td key={column.key} className={column.sticky ? "is-sticky" : undefined}>
@@ -544,6 +559,13 @@ export function LibraryDetailPage() {
                 ))}
               </tbody>
             </table>
+            <div className="data-table-footer">
+              <span className="media-meta">
+                {t("libraryDetail.renderedEntries", { rendered: files.length, total: filesTotal })}
+              </span>
+              {isLoadingMore ? <span className="media-meta">{t("libraryDetail.loadingMore")}</span> : null}
+            </div>
+            <div ref={loadMoreSentinelRef} className="data-table-sentinel" aria-hidden="true" />
           </div>
         )}
       </AsyncPanel>

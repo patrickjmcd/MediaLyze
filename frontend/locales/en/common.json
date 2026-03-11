@@ -86,7 +86,10 @@
     "searchLabel": "Search files and metadata",
     "searchPlaceholder": "search files and metadata",
     "loadingFiles": "Loading analyzed files…",
+    "loadingMore": "Loading more entries…",
     "noAnalyzedFiles": "No analyzed files yet.",
+    "renderedEntries": "{{rendered}} of {{total}} entries rendered",
+    "loadMore": "Load {{count}} more",
     "recentScanJobs": "Recent scan jobs",
     "recentScanJobsSubtitle": "Latest queue and run history",
     "jobLabel": "Job #{{id}}"

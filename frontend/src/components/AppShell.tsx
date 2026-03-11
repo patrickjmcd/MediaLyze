@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
-import { NavLink, Outlet, useLocation } from "react-router-dom";
+import { NavLink, Outlet } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { House, RefreshCwOff, Settings } from "lucide-react";
 import { motion } from "motion/react";
 
 import { AnimatedSearchIcon } from "./AnimatedSearchIcon";
-import { api, type LibrarySummary, type ScanJob } from "../lib/api";
+import { type ScanJob } from "../lib/api";
+import { useAppData } from "../lib/app-data";
 import { useScanJobs } from "../lib/scan-jobs";
 
 function renderActiveJobDetail(t: (key: string, options?: Record<string, unknown>) => string, job: ScanJob): string {
@@ -24,35 +25,16 @@ function renderActiveJobDetail(t: (key: string, options?: Record<string, unknown
 
 export function AppShell() {
   const { t } = useTranslation();
-  const location = useLocation();
   const { activeJobs, stopAll } = useScanJobs();
-  const [libraries, setLibraries] = useState<LibrarySummary[]>([]);
+  const { libraries, librariesLoaded, loadLibraries } = useAppData();
   const [stoppingScans, setStoppingScans] = useState(false);
 
   useEffect(() => {
-    let cancelled = false;
-
-    async function loadLibraries() {
-      try {
-        const items = await api.libraries();
-        if (!cancelled) {
-          setLibraries(items);
-        }
-      } catch {
-        // Keep the last known library navigation state on transient errors.
-      }
+    if (librariesLoaded) {
+      return;
     }
-
-    void loadLibraries();
-    const timer = window.setInterval(() => {
-      void loadLibraries();
-    }, 5000);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [location.pathname]);
+    void loadLibraries().catch(() => undefined);
+  }, [librariesLoaded, loadLibraries]);
 
   return (
     <div className="layout media-app-shell">

@@ -58,6 +58,26 @@ export type MediaFileRow = {
   subtitle_languages: string[];
 };
 
+export type MediaFileSortKey =
+  | "file"
+  | "size"
+  | "video_codec"
+  | "resolution"
+  | "hdr_type"
+  | "duration"
+  | "audio_languages"
+  | "subtitle_languages"
+  | "mtime"
+  | "last_analyzed_at"
+  | "quality_score";
+
+export type MediaFileTablePage = {
+  total: number;
+  offset: number;
+  limit: number;
+  items: MediaFileRow[];
+};
+
 export type MediaFileDetail = MediaFileRow & {
   media_format: {
     container_format: string | null;
@@ -131,7 +151,35 @@ export const api = {
   activeScanJobs: () => request<ScanJob[]>("/scan-jobs/active"),
   libraries: () => request<LibrarySummary[]>("/libraries"),
   library: (id: string | number) => request<LibraryDetail>(`/libraries/${id}`),
-  libraryFiles: (id: string | number) => request<MediaFileRow[]>(`/libraries/${id}/files`),
+  libraryFiles: (
+    id: string | number,
+    params?: {
+      offset?: number;
+      limit?: number;
+      search?: string;
+      sortKey?: MediaFileSortKey;
+      sortDirection?: "asc" | "desc";
+    },
+  ) => {
+    const searchParams = new URLSearchParams();
+    if (params?.offset !== undefined) {
+      searchParams.set("offset", String(params.offset));
+    }
+    if (params?.limit !== undefined) {
+      searchParams.set("limit", String(params.limit));
+    }
+    if (params?.search) {
+      searchParams.set("search", params.search);
+    }
+    if (params?.sortKey) {
+      searchParams.set("sort_key", params.sortKey);
+    }
+    if (params?.sortDirection) {
+      searchParams.set("sort_direction", params.sortDirection);
+    }
+    const query = searchParams.toString();
+    return request<MediaFileTablePage>(`/libraries/${id}/files${query ? `?${query}` : ""}`);
+  },
   libraryScanJobs: (id: string | number) => request<ScanJob[]>(`/libraries/${id}/scan-jobs`),
   file: (id: string | number) => request<MediaFileDetail>(`/files/${id}`),
   browse: (path = ".") => request<BrowseResponse>(`/browse?path=${encodeURIComponent(path)}`),

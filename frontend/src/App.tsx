@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 
 import { AppShell } from "./components/AppShell";
+import { AppDataProvider } from "./lib/app-data";
 import { ScanJobsProvider } from "./lib/scan-jobs";
 import { DashboardPage } from "./pages/DashboardPage";
 import { FileDetailPage } from "./pages/FileDetailPage";
@@ -10,15 +11,17 @@ import { LibraryDetailPage } from "./pages/LibraryDetailPage";
 export function App() {
   return (
     <ScanJobsProvider>
-      <Routes>
-        <Route element={<AppShell />}>
-          <Route path="/" element={<DashboardPage />} />
-          <Route path="/libraries" element={<LibrariesPage />} />
-          <Route path="/libraries/:libraryId" element={<LibraryDetailPage />} />
-          <Route path="/files/:fileId" element={<FileDetailPage />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Route>
-      </Routes>
+      <AppDataProvider>
+        <Routes>
+          <Route element={<AppShell />}>
+            <Route path="/" element={<DashboardPage />} />
+            <Route path="/libraries" element={<LibrariesPage />} />
+            <Route path="/libraries/:libraryId" element={<LibraryDetailPage />} />
+            <Route path="/files/:fileId" element={<FileDetailPage />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Route>
+        </Routes>
+      </AppDataProvider>
     </ScanJobsProvider>
   );
 }

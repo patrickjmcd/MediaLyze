@@ -1,6 +1,7 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useEffectEvent, useMemo, useState, type ReactNode } from "react";
 
 import { api, type ScanJob } from "./api";
+import { getIdlePollInterval, usePageVisibility } from "./page-visibility";
 
 type ScanJobsContextValue = {
   activeJobs: ScanJob[];
@@ -13,49 +14,41 @@ const ScanJobsContext = createContext<ScanJobsContextValue | null>(null);
 
 export function ScanJobsProvider({ children }: { children: ReactNode }) {
   const [activeJobs, setActiveJobs] = useState<ScanJob[]>([]);
+  const isPageVisible = usePageVisibility();
+  const pollInterval = isPageVisible ? (activeJobs.length > 0 ? 3000 : getIdlePollInterval()) : null;
 
-  async function refresh() {
+  const refresh = useEffectEvent(async () => {
     try {
       const jobs = await api.activeScanJobs();
       setActiveJobs(jobs);
     } catch {
       // Keep the last known active jobs on transient polling errors.
     }
-  }
+  });
 
-  async function stopAll() {
+  const stopAll = useEffectEvent(async () => {
     try {
       await api.cancelActiveScanJobs();
       setActiveJobs([]);
     } catch {
       // Keep the last known state on transient errors.
     }
-  }
+  });
 
   useEffect(() => {
-    let cancelled = false;
-
-    async function load() {
-      try {
-        const jobs = await api.activeScanJobs();
-        if (!cancelled) {
-          setActiveJobs(jobs);
-        }
-      } catch {
-        // Keep the last known state on transient errors.
-      }
+    void refresh();
+    if (pollInterval === null) {
+      return undefined;
     }
 
-    void load();
     const timer = window.setInterval(() => {
-      void load();
-    }, 3000);
+      void refresh();
+    }, pollInterval);
 
     return () => {
-      cancelled = true;
       window.clearInterval(timer);
     };
-  }, []);
+  }, [pollInterval, refresh]);
 
   const value = useMemo(
     () => ({
