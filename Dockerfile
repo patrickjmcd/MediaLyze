@@ -22,18 +22,21 @@ ENV PYTHONUNBUFFERED=1
 WORKDIR /app
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg tzdata \
+    && apt-get install -y --no-install-recommends ffmpeg gosu tzdata \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml README.md LICENSE CONTRIBUTING.md ./
 COPY backend ./backend
 COPY alembic ./alembic
+COPY docker/entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 COPY frontend/package.json ./frontend/package.json
 COPY --from=frontend-build /app/frontend/dist ./frontend/dist
 
 RUN pip install --no-cache-dir .
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 EXPOSE 8080
 
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["sh", "-c", "uvicorn backend.app.main:app --host 0.0.0.0 --port ${APP_PORT}"]
