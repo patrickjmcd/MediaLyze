@@ -80,7 +80,7 @@ The container serves plain HTTP on port `8080`; if you want HTTPS, terminate it 
 
 ```bash
 cd docker
-cp .env.example .env
+cp docker/.env.example .env
 docker compose up --build
 ```
 
@@ -146,6 +146,7 @@ backend/   FastAPI app, database models, scanner, services
 frontend/  React + Vite application
 tests/     Python test suite
 docs/      Project documentation
+docker/    Docker related files
 ```
 
 ## Project Status
