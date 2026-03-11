@@ -602,7 +602,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 6px;
   width: 100%;
   padding: 0;
   border: 0;
@@ -621,7 +621,10 @@
 }
 
 .sort-indicator {
-  font-size: 0.7rem;
+  min-width: 1ch;
+  font-size: 0.85rem;
+  line-height: 1;
+  text-align: right;
   color: rgba(31, 28, 22, 0.38);
 }
 

@@ -80,6 +80,17 @@ function scoreMeterLabel(score: number): string {
   return "high";
 }
 
+function sortIndicator(direction: SortDirection): string {
+  return direction === "asc" ? "↑" : "↓";
+}
+
+function ariaSortValue(isActive: boolean, direction: SortDirection): "none" | "ascending" | "descending" {
+  if (!isActive) {
+    return "none";
+  }
+  return direction === "asc" ? "ascending" : "descending";
+}
+
 function buildFileColumns(t: (key: string, options?: Record<string, unknown>) => string): FileColumnDefinition[] {
   return [
     {
@@ -550,12 +561,18 @@ export function LibraryDetailPage() {
                   {activeColumns.map((column) => {
                     const isActiveSort = sortKey === column.key;
                     return (
-                      <th key={column.key} className={column.sticky ? "is-sticky" : undefined} scope="col">
+                      <th
+                        key={column.key}
+                        className={column.sticky ? "is-sticky" : undefined}
+                        scope="col"
+                        aria-sort={ariaSortValue(isActiveSort, sortDirection)}
+                      >
                         <button type="button" className="column-sort" onClick={() => updateSort(column.key)}>
                           <span>{t(column.labelKey)}</span>
-                          <span className={`sort-indicator${isActiveSort ? " is-active" : ""}`}>
-                            {isActiveSort ? t(`sort.${sortDirection}`) : ""}
+                          <span className={`sort-indicator${isActiveSort ? " is-active" : ""}`} aria-hidden="true">
+                            {isActiveSort ? sortIndicator(sortDirection) : ""}
                           </span>
+                          {isActiveSort ? <span className="sr-only">{t(`sort.${sortDirection}`)}</span> : null}
                         </button>
                       </th>
                     );
