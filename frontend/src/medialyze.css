@@ -508,6 +508,7 @@
 .ignore-patterns-stack {
   display: grid;
   gap: 10px;
+  margin-top: 12px;
 }
 
 .ignore-pattern-row {
@@ -515,6 +516,22 @@
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px;
   align-items: center;
+}
+
+.ignore-pattern-row-draft input {
+  background: rgba(255, 255, 255, 0.88);
+  border-color: rgba(31, 28, 22, 0.12);
+}
+
+.ignore-pattern-row-saved input {
+  background: rgba(27, 153, 139, 0.1);
+  border-color: rgba(27, 153, 139, 0.28);
+  color: #0f4f49;
+}
+
+.ignore-pattern-row-saved input:focus {
+  border-color: rgba(27, 153, 139, 0.4);
+  box-shadow: 0 0 0 4px rgba(27, 153, 139, 0.12);
 }
 
 .tooltip-trigger {

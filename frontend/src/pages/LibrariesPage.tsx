@@ -83,12 +83,16 @@ export function LibrariesPage() {
   const [draggedStatisticId, setDraggedStatisticId] = useState<LibraryStatisticId | null>(null);
   const [dropTargetStatisticId, setDropTargetStatisticId] = useState<LibraryStatisticId | null>(null);
   const [form, setForm] = useState(EMPTY_FORM);
-  const [savedIgnorePatterns, setSavedIgnorePatterns] = useState<string[]>([]);
+  const [ignorePatternInputs, setIgnorePatternInputs] = useState<string[]>([]);
   const [ignorePatternDraft, setIgnorePatternDraft] = useState("");
   const [ignorePatternsLoadError, setIgnorePatternsLoadError] = useState<string | null>(null);
   const [ignorePatternsStatus, setIgnorePatternsStatus] = useState<string | null>(null);
   const [isLoadingIgnorePatterns, setIsLoadingIgnorePatterns] = useState(true);
   const [isSavingIgnorePatterns, setIsSavingIgnorePatterns] = useState(false);
+  const ignorePatternsSaveTimer = useRef<number | null>(null);
+  const ignorePatternsRequestId = useRef(0);
+  const ignorePatternsSuccessId = useRef(0);
+  const persistedIgnorePatterns = useRef<string[]>([]);
   const { activeJobs, hasActiveJobs, refresh, trackJob } = useScanJobs();
   const hadActiveJobsRef = useRef(hasActiveJobs);
   const orderedStatistics = getOrderedLibraryStatisticDefinitions(statisticsSettings);
@@ -149,7 +153,9 @@ export function LibrariesPage() {
         if (!active) {
           return;
         }
-        setSavedIgnorePatterns(payload.ignore_patterns);
+        persistedIgnorePatterns.current = payload.ignore_patterns;
+        ignorePatternsSuccessId.current = ignorePatternsRequestId.current;
+        setIgnorePatternInputs(payload.ignore_patterns);
         setIgnorePatternsLoadError(null);
       })
       .catch((reason: Error) => {
@@ -173,6 +179,9 @@ export function LibrariesPage() {
     return () => {
       for (const timer of Object.values(autoSaveTimers.current)) {
         window.clearTimeout(timer);
+      }
+      if (ignorePatternsSaveTimer.current) {
+        window.clearTimeout(ignorePatternsSaveTimer.current);
       }
     };
   }, []);
@@ -300,18 +309,51 @@ export function LibrariesPage() {
   }
 
   async function persistIgnorePatterns(nextPatterns: string[]) {
+    const requestId = ignorePatternsRequestId.current + 1;
+    ignorePatternsRequestId.current = requestId;
     setIsSavingIgnorePatterns(true);
     try {
       const updated = await api.updateAppSettings({ ignore_patterns: normalizeIgnorePatterns(nextPatterns) });
-      setSavedIgnorePatterns(updated.ignore_patterns);
-      setIgnorePatternsStatus(null);
+      if (requestId > ignorePatternsSuccessId.current) {
+        ignorePatternsSuccessId.current = requestId;
+        persistedIgnorePatterns.current = updated.ignore_patterns;
+      }
+      if (requestId === ignorePatternsRequestId.current) {
+        setIgnorePatternInputs(updated.ignore_patterns);
+        setIgnorePatternsStatus(null);
+      }
       return updated.ignore_patterns;
     } catch (reason) {
-      setIgnorePatternsStatus((reason as Error).message);
+      if (requestId === ignorePatternsRequestId.current) {
+        setIgnorePatternInputs(persistedIgnorePatterns.current);
+        setIgnorePatternsStatus((reason as Error).message);
+      }
       return null;
     } finally {
-      setIsSavingIgnorePatterns(false);
+      if (requestId === ignorePatternsRequestId.current) {
+        setIsSavingIgnorePatterns(false);
+      }
     }
+  }
+
+  function scheduleIgnorePatternsSave(nextPatterns: string[]) {
+    setIgnorePatternInputs(nextPatterns);
+    setIgnorePatternsStatus(null);
+    if (ignorePatternsSaveTimer.current) {
+      window.clearTimeout(ignorePatternsSaveTimer.current);
+    }
+    ignorePatternsSaveTimer.current = window.setTimeout(() => {
+      ignorePatternsSaveTimer.current = null;
+      void persistIgnorePatterns(nextPatterns);
+    }, 450);
+  }
+
+  function flushIgnorePatternsSave(nextPatterns: string[]) {
+    if (ignorePatternsSaveTimer.current) {
+      window.clearTimeout(ignorePatternsSaveTimer.current);
+      ignorePatternsSaveTimer.current = null;
+    }
+    return persistIgnorePatterns(nextPatterns);
   }
 
   async function addIgnorePattern() {
@@ -319,15 +361,31 @@ export function LibrariesPage() {
     if (!candidate) {
       return;
     }
-    const updated = await persistIgnorePatterns([...savedIgnorePatterns, candidate]);
+    const updated = await flushIgnorePatternsSave([...ignorePatternInputs, candidate]);
     if (updated) {
       setIgnorePatternDraft("");
     }
   }
 
   async function removeIgnorePattern(index: number) {
-    const nextPatterns = savedIgnorePatterns.filter((_, rowIndex) => rowIndex !== index);
-    await persistIgnorePatterns(nextPatterns);
+    const nextPatterns = ignorePatternInputs.filter((_, rowIndex) => rowIndex !== index);
+    setIgnorePatternInputs(nextPatterns);
+    await flushIgnorePatternsSave(nextPatterns);
+  }
+
+  function updateIgnorePattern(index: number, value: string) {
+    const nextPatterns = ignorePatternInputs.map((pattern, rowIndex) => (rowIndex === index ? value : pattern));
+    scheduleIgnorePatternsSave(nextPatterns);
+  }
+
+  async function finalizeIgnorePatternEdit(index: number) {
+    const currentValue = ignorePatternInputs[index];
+    if (currentValue === undefined) {
+      return;
+    }
+    const nextPatterns = ignorePatternInputs.map((pattern, rowIndex) => (rowIndex === index ? pattern.trim() : pattern));
+    setIgnorePatternInputs(nextPatterns);
+    await flushIgnorePatternsSave(nextPatterns);
   }
 
   function updateStatisticsSettings(
@@ -654,12 +712,14 @@ export function LibrariesPage() {
                   </button>
                 </div>
                 <div className="ignore-patterns-stack">
-                  {savedIgnorePatterns.map((pattern, index) => (
-                    <div className="ignore-pattern-row" key={`ignore-pattern-${index}`}>
+                  {ignorePatternInputs.map((pattern, index) => (
+                    <div className="ignore-pattern-row ignore-pattern-row-saved" key={`ignore-pattern-${index}`}>
                       <input
                         type="text"
                         value={pattern}
-                        readOnly
+                        onChange={(event) => updateIgnorePattern(index, event.target.value)}
+                        onBlur={() => void finalizeIgnorePatternEdit(index)}
+                        spellCheck={false}
                       />
                       <button
                         type="button"

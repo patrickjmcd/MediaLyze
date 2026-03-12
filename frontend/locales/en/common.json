@@ -52,7 +52,7 @@
     "ignorePatternsTitle": "Ignore patterns",
     "ignorePatternsSubtitle": "Glob patterns are matched against the normalized path relative to each library root before files are indexed or analyzed.",
     "ignorePatternsLabel": "Glob patterns",
-    "ignorePatternsHint": "Enter a glob pattern and save it directly with plus. Matching files and folders are skipped during scans.",
+    "ignorePatternsHint": "make sure to perform a new scan after changing patterns",
     "ignorePatternsPlaceholder": "*/Extras/*",
     "ignorePatternsTooltipAria": "Show ignore pattern examples",
     "ignorePatternsTooltip": "Examples:\n\nIgnore all .nfo files:\n\"*.nfo\"\n\nIgnore everything below the top-level Extras folder:\n\"Extras/*\"\n\nIgnore any folder named Sample:\n\"*/Sample/*\"\n\nIgnore files and folders whose path contains trailer:\n\"*trailer*\"",
