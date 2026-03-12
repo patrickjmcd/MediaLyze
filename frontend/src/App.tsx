@@ -15,7 +15,7 @@ export function App() {
         <Routes>
           <Route element={<AppShell />}>
             <Route path="/" element={<DashboardPage />} />
-            <Route path="/libraries" element={<LibrariesPage />} />
+            <Route path="/settings" element={<LibrariesPage />} />
             <Route path="/libraries/:libraryId" element={<LibraryDetailPage />} />
             <Route path="/files/:fileId" element={<FileDetailPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />

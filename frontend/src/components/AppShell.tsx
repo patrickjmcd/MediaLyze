@@ -75,7 +75,7 @@ export function AppShell() {
                 )}
               </NavLink>
               <NavLink
-                to="/libraries"
+                to="/settings"
                 end
                 aria-label={t("nav.settingsAria")}
                 className={({ isActive }) => `icon-nav-button ${isActive ? "active" : ""}`.trim()}
