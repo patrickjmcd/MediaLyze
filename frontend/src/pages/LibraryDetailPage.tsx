@@ -389,8 +389,9 @@ export function LibraryDetailPage() {
       setFiles(cachedFiles.items);
       setFilesTotal(cachedFiles.total);
       setIsFilesLoading(false);
-      setIsFilesRefreshing(false);
+      setIsFilesRefreshing(true);
       previousLibraryIdRef.current = libraryId;
+      void loadFilesPage(0, false, fileQueryKey);
       return;
     }
 
@@ -453,16 +454,7 @@ export function LibraryDetailPage() {
         <div className="panel-title-row">
           <h2>{displayLibrary?.name ?? t("libraryDetail.loading")}</h2>
           {displayLibrary?.path ? (
-<<<<<<< HEAD
-            <span
-              className="tooltip-trigger tooltip-trigger-below"
-              tabIndex={0}
-              aria-label={t("libraryDetail.libraryPathAria")}
-              data-tooltip={displayLibrary.path}
-            >
-=======
             <TooltipTrigger ariaLabel={t("libraryDetail.libraryPathAria")} content={displayLibrary.path}>
->>>>>>> 70fd2e4 (feat: add option to ignore blo patterns)
               ?
             </TooltipTrigger>
           ) : null}

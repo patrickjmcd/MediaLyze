@@ -536,16 +536,6 @@
   flex-shrink: 0;
 }
 
-<<<<<<< HEAD
-.tooltip-trigger::after {
-  content: attr(data-tooltip);
-  position: absolute;
-  box-sizing: border-box;
-  left: 50%;
-  bottom: calc(100% + 10px);
-  transform: translateX(-50%);
-  width: min(320px, 70vw);
-=======
 .tooltip-trigger:hover {
   color: var(--ink);
 }
@@ -561,24 +551,18 @@
   box-sizing: border-box;
   width: min(320px, calc(100vw - 32px));
   max-width: calc(100vw - 32px);
->>>>>>> 70fd2e4 (feat: add option to ignore blo patterns)
   padding: 10px 12px;
   border-radius: 12px;
   background: rgba(31, 28, 22, 0.94);
   color: #f3efe8;
   font-size: 0.82rem;
   line-height: 1.35;
-<<<<<<< HEAD
-  white-space: pre-line;
-  text-align: left;
-=======
   white-space: normal;
   text-align: left;
   overflow-wrap: anywhere;
   word-break: break-word;
   overflow-y: auto;
   pointer-events: auto;
->>>>>>> 70fd2e4 (feat: add option to ignore blo patterns)
   box-shadow: 0 14px 28px rgba(31, 28, 22, 0.18);
 }
 

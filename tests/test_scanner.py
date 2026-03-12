@@ -189,15 +189,9 @@ def test_scan_ignores_matching_relative_paths_and_external_subtitles(tmp_path: P
                 key="global",
                 value={
                     "ignore_patterns": [
-<<<<<<< HEAD
-                        "(^|/)extras(/|$)",
-                        "(^|/)sample\\.[^/]+$",
-                        "\\.skip\\.srt$",
-=======
                         "*/extras/*",
                         "sample.*",
                         "*.skip.srt",
->>>>>>> 70fd2e4 (feat: add option to ignore blo patterns)
                     ]
                 },
             )
@@ -221,3 +215,148 @@ def test_scan_ignores_matching_relative_paths_and_external_subtitles(tmp_path: P
     assert job.files_scanned == 1
     assert [media_file.relative_path for media_file in indexed_files] == ["movie.mkv"]
     assert [subtitle.path for subtitle in subtitles] == ["movie.en.srt"]
+
+
+def test_incremental_scan_removes_existing_files_that_become_ignored(tmp_path: Path, monkeypatch) -> None:
+    media_dir = tmp_path / "library"
+    media_dir.mkdir()
+    video_path = media_dir / "movie.mkv"
+    video_path.write_text("video")
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+    payload = {
+        "format": {
+            "format_name": "matroska",
+            "duration": "60.0",
+            "bit_rate": "1000",
+            "probe_score": 100,
+        },
+        "streams": [
+            {
+                "index": 0,
+                "codec_type": "video",
+                "codec_name": "h264",
+                "width": 1920,
+                "height": 1080,
+                "avg_frame_rate": "24/1",
+            }
+        ],
+    }
+
+    monkeypatch.setattr("backend.app.services.scanner.run_ffprobe", lambda file_path, ffprobe_path: payload)
+    monkeypatch.setattr("backend.app.services.scanner.detect_external_subtitles", lambda file_path, extensions: [])
+
+    settings = Settings(
+        config_path=tmp_path / "config",
+        media_root=tmp_path,
+        ffprobe_worker_count=1,
+        scan_commit_batch_size=1,
+    )
+
+    with session_factory() as db:
+        library = Library(
+            name="Movies",
+            path=str(media_dir),
+            type=LibraryType.movies,
+            scan_mode=ScanMode.manual,
+            scan_config={},
+        )
+        db.add(library)
+        db.commit()
+
+        first_job = run_scan(db, settings, library.id, "incremental")
+        first_files_total = first_job.files_total
+        indexed_before = db.scalars(select(MediaFile).order_by(MediaFile.relative_path)).all()
+
+        setting = db.get(AppSetting, "global")
+        if setting is None:
+            setting = AppSetting(key="global", value={})
+            db.add(setting)
+        setting.value = {"ignore_patterns": ["*.mkv"]}
+        db.commit()
+
+        second_job = run_scan(db, settings, library.id, "incremental")
+        second_files_total = second_job.files_total
+        second_files_scanned = second_job.files_scanned
+        indexed_after = db.scalars(select(MediaFile).order_by(MediaFile.relative_path)).all()
+
+    assert first_files_total == 1
+    assert [media_file.relative_path for media_file in indexed_before] == ["movie.mkv"]
+    assert second_files_total == 0
+    assert second_files_scanned == 0
+    assert indexed_after == []
+
+
+def test_incremental_scan_updates_existing_files_when_size_or_mtime_changes(tmp_path: Path, monkeypatch) -> None:
+    media_dir = tmp_path / "library"
+    media_dir.mkdir()
+    video_path = media_dir / "movie.mkv"
+    video_path.write_text("v1")
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+    payload = {
+        "format": {
+            "format_name": "matroska",
+            "duration": "60.0",
+            "bit_rate": "1000",
+            "probe_score": 100,
+        },
+        "streams": [
+            {
+                "index": 0,
+                "codec_type": "video",
+                "codec_name": "h264",
+                "width": 1920,
+                "height": 1080,
+                "avg_frame_rate": "24/1",
+            }
+        ],
+    }
+
+    monkeypatch.setattr("backend.app.services.scanner.run_ffprobe", lambda file_path, ffprobe_path: payload)
+    monkeypatch.setattr("backend.app.services.scanner.detect_external_subtitles", lambda file_path, extensions: [])
+
+    settings = Settings(
+        config_path=tmp_path / "config",
+        media_root=tmp_path,
+        ffprobe_worker_count=1,
+        scan_commit_batch_size=1,
+    )
+
+    with session_factory() as db:
+        library = Library(
+            name="Movies",
+            path=str(media_dir),
+            type=LibraryType.movies,
+            scan_mode=ScanMode.manual,
+            scan_config={},
+        )
+        db.add(library)
+        db.commit()
+
+        first_job = run_scan(db, settings, library.id, "incremental")
+        first_files_scanned = first_job.files_scanned
+        media_before = db.scalar(select(MediaFile).where(MediaFile.library_id == library.id))
+        assert media_before is not None
+        first_size = media_before.size_bytes
+        first_mtime = media_before.mtime
+
+        video_path.write_text("version-2-with-more-bytes")
+        stat = video_path.stat()
+
+        second_job = run_scan(db, settings, library.id, "incremental")
+        second_files_scanned = second_job.files_scanned
+        media_after = db.scalar(select(MediaFile).where(MediaFile.library_id == library.id))
+
+    assert first_files_scanned == 1
+    assert second_files_scanned == 1
+    assert media_after is not None
+    assert media_after.size_bytes == stat.st_size
+    assert media_after.mtime == stat.st_mtime
+    assert media_after.size_bytes != first_size or media_after.mtime != first_mtime
