@@ -15,6 +15,25 @@
   align-items: start;
 }
 
+.app-title-block {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.app-version {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(31, 28, 22, 0.08);
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
 .media-nav-panel {
   display: flex;
   flex-wrap: wrap;
