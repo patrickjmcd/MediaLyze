@@ -1,34 +1,42 @@
-name: auto docker image building/publishing
+name: publish official release
 on:
   push:
-    branches:
-      - main
-    paths:
-      - 'Dockerfile'
-  workflow_dispatch:
+    tags:
+      - 'v*.*.*'
 
 permissions:
-  contents: read
+  contents: write
   packages: write
 
 env:
   IMAGE_NAME: ghcr.io/frederikemmer/medialyze
 
 jobs:
-  publish_images:
+  publish_release:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-      - name: Read image version
+        with:
+          fetch-depth: 0
+
+      - name: Validate release metadata
+        run: python3 .github/scripts/release_metadata.py validate --tag-ref "${GITHUB_REF}"
+
+      - name: Resolve release version
         id: version
-        run: echo "version=$(sed -n 's/^ARG APP_VERSION=//p' Dockerfile | head -n 1)" >> "$GITHUB_OUTPUT"
+        run: echo "version=$(python3 .github/scripts/release_metadata.py version)" >> "$GITHUB_OUTPUT"
+
+      - name: Log release target
+        run: echo "Publishing version ${{ steps.version.outputs.version }} from ${GITHUB_REF_NAME}"
+
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Build and push image
         run: |
           docker build \
@@ -38,3 +46,15 @@ jobs:
             .
           docker push "${IMAGE_NAME}:latest"
           docker push "${IMAGE_NAME}:${{ steps.version.outputs.version }}"
+
+      - name: Extract release notes
+        run: python3 .github/scripts/release_metadata.py release-notes --version "${{ steps.version.outputs.version }}" > release-notes.md
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "MediaLyze ${GITHUB_REF_NAME}" \
+            --notes-file release-notes.md

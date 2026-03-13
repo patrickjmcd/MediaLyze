@@ -1,0 +1,25 @@
+name: validate release metadata
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'Dockerfile'
+      - 'pyproject.toml'
+      - 'frontend/package.json'
+      - 'CHANGELOG.md'
+      - '.github/scripts/release_metadata.py'
+
+permissions:
+  contents: read
+
+jobs:
+  validate_release_metadata:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate version alignment and changelog
+        run: python3 .github/scripts/release_metadata.py validate
