@@ -16,7 +16,6 @@ concurrency:
 
 env:
   IMAGE_NAME: ghcr.io/frederikemmer/medialyze
-  PACKAGE_NAME: medialyze
 
 jobs:
   publish_dev_image:
@@ -24,50 +23,35 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Resolve dev image version
         id: version
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
 
           git fetch origin main --depth=1
+          git fetch --tags origin
 
-          main_branch_version="$(git show origin/main:Dockerfile | sed -n 's/^ARG APP_VERSION=//p' | head -n 1)"
-
-          owner_type="$(gh api "/users/${GITHUB_REPOSITORY_OWNER}" --jq '.type')"
-          if [[ "${owner_type}" == "Organization" ]]; then
-            package_endpoint="/orgs/${GITHUB_REPOSITORY_OWNER}/packages/container/${PACKAGE_NAME}/versions?per_page=100"
-          else
-            package_endpoint="/users/${GITHUB_REPOSITORY_OWNER}/packages/container/${PACKAGE_NAME}/versions?per_page=100"
-          fi
-
-          tags_file="$(mktemp)"
-          error_file="$(mktemp)"
-          trap 'rm -f "${tags_file}" "${error_file}"' EXIT
-
-          if ! gh api --paginate "${package_endpoint}" --jq '.[].metadata.container.tags[]?' >"${tags_file}" 2>"${error_file}"; then
-            if grep -q "404" "${error_file}"; then
-              : >"${tags_file}"
-            else
-              cat "${error_file}" >&2
-              exit 1
-            fi
-          fi
-
-          released_base_version="$(
-            grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' "${tags_file}" | sort -V | tail -n 1 || true
+          main_branch_version="$(
+            git show origin/main:Dockerfile \
+              | sed -n 's/^ARG APP_VERSION=//p' \
+              | tail -n 1
           )"
 
-          if [[ -n "${released_base_version}" ]]; then
-            base_version="${released_base_version}"
+          latest_release_tag="$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n 1)"
+
+          if [[ -n "${latest_release_tag}" ]]; then
+            base_version="${latest_release_tag#v}"
+            base_commit="$(git rev-list -n 1 "${latest_release_tag}")"
           else
             base_version="${main_branch_version}"
+            base_commit="$(git merge-base HEAD origin/main)"
           fi
 
           if [[ -z "${base_version}" ]]; then
-            echo "Unable to determine a base version from GHCR or origin/main:Dockerfile" >&2
+            echo "Unable to determine a base version from Git tags or origin/main:Dockerfile" >&2
             exit 1
           fi
 
@@ -76,20 +60,12 @@ jobs:
             exit 1
           fi
 
-          max_suffix=0
-          version_pattern="^${base_version//./\\.}-dev([0-9]+)$"
+          commits_since_base="$(git rev-list --count "${base_commit}..HEAD")"
+          if (( commits_since_base < 1 )); then
+            commits_since_base=1
+          fi
 
-          while IFS= read -r tag; do
-            if [[ "${tag}" =~ ${version_pattern} ]]; then
-              suffix_value=$((10#${BASH_REMATCH[1]}))
-              if (( suffix_value > max_suffix )); then
-                max_suffix="${suffix_value}"
-              fi
-            fi
-          done < "${tags_file}"
-
-          next_suffix=$((max_suffix + 1))
-          dev_version="$(printf '%s-dev%03d' "${base_version}" "${next_suffix}")"
+          dev_version="$(printf '%s-dev%03d' "${base_version}" "${commits_since_base}")"
 
           echo "base_version=${base_version}" >> "${GITHUB_OUTPUT}"
           echo "version=${dev_version}" >> "${GITHUB_OUTPUT}"
