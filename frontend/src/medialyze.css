@@ -1729,6 +1729,19 @@ html[data-theme="dark"] {
     background: rgba(240, 236, 228, 0.10);
   }
 
+  .quality-score-tooltip-trigger,
+  .quality-score-tooltip-trigger.tooltip-trigger {
+    background: transparent;
+  }
+
+  .score-meter {
+    background: rgba(31, 28, 22, 0.8);
+  }
+
+  .app-settings-flag-row {
+    background: #1c1a16;
+  }
+
   .file-link:hover {
     color: #3ec5b8;
   }
