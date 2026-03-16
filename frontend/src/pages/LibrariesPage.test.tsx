@@ -109,7 +109,7 @@ describe("LibrariesPage ignore patterns", () => {
 
     expect(customToggle).toHaveAttribute("aria-expanded", "false");
     expect(defaultToggle).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByDisplayValue("*/@eaDir/*")).toBeInTheDocument();
+    expect(await screen.findByDisplayValue("*/@eaDir/*")).toBeInTheDocument();
   });
 
   it("sends custom and default ignore patterns separately when editing defaults", async () => {

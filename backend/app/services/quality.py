@@ -83,6 +83,8 @@ class QualitySubtitle:
 @dataclass(slots=True)
 class QualityScoreInput:
     container_bit_rate: int | None
+    duration_seconds: float | None = None
+    size_bytes: int | None = None
     video_streams: list[QualityVideoStream] = field(default_factory=list)
     audio_streams: list[QualityAudioStream] = field(default_factory=list)
     subtitle_streams: list[QualitySubtitle] = field(default_factory=list)
@@ -111,9 +113,12 @@ def normalize_quality_profile(payload: dict[str, Any] | QualityProfile | None) -
 def build_quality_score_input(
     probe_result: ProbeResult,
     external_subtitles: list[dict[str, str | None]] | None = None,
+    size_bytes: int | None = None,
 ) -> QualityScoreInput:
     return QualityScoreInput(
         container_bit_rate=probe_result.media_format.bit_rate,
+        duration_seconds=probe_result.media_format.duration,
+        size_bytes=size_bytes,
         video_streams=[
             QualityVideoStream(
                 stream_index=stream.stream_index,
@@ -146,6 +151,8 @@ def build_quality_score_input(
 def build_quality_score_input_from_media_file(media_file) -> QualityScoreInput:
     return QualityScoreInput(
         container_bit_rate=media_file.media_format.bit_rate if media_file.media_format else None,
+        duration_seconds=media_file.media_format.duration if media_file.media_format else None,
+        size_bytes=media_file.size_bytes,
         video_streams=[
             QualityVideoStream(
                 stream_index=stream.stream_index,
@@ -400,19 +407,38 @@ def _visual_density(score_input: QualityScoreInput, primary_video: QualityVideoS
     if not width or not height:
         return None
 
-    bitrate = primary_video.bit_rate
-    if bitrate is None:
-        audio_bitrate = sum(max(stream.bit_rate or 0, 0) for stream in score_input.audio_streams)
-        if score_input.container_bit_rate is None:
-            return None
-        bitrate = max(score_input.container_bit_rate - audio_bitrate, 0)
+    candidates: list[float] = []
 
-    if bitrate <= 0:
-        return 0.0
-    bytes_per_minute = (bitrate / 8) * 60
-    gb_per_minute = bytes_per_minute / 1_000_000_000
+    bitrate = primary_video.bit_rate
+    if bitrate is not None and bitrate > 0:
+        candidates.append(_gb_per_minute_from_bitrate(bitrate))
+    else:
+        audio_bitrate = sum(max(stream.bit_rate or 0, 0) for stream in score_input.audio_streams)
+        if score_input.container_bit_rate is not None:
+            estimated_video_bitrate = max(score_input.container_bit_rate - audio_bitrate, 0)
+            if estimated_video_bitrate > 0:
+                candidates.append(_gb_per_minute_from_bitrate(estimated_video_bitrate))
+
+    if score_input.size_bytes is not None and score_input.duration_seconds and score_input.duration_seconds > 0:
+        candidates.append(_gb_per_minute_from_size(score_input.size_bytes, score_input.duration_seconds))
+
+    if not candidates:
+        return None
+
+    gb_per_minute = max(candidates)
     pixel_scale = REFERENCE_1080P_PIXELS / (width * height)
     return gb_per_minute * pixel_scale
+
+
+def _gb_per_minute_from_bitrate(bitrate: int) -> float:
+    bytes_per_minute = (bitrate / 8) * 60
+    return bytes_per_minute / 1_000_000_000
+
+
+def _gb_per_minute_from_size(size_bytes: int, duration_seconds: float) -> float:
+    if duration_seconds <= 0:
+        return 0.0
+    return (size_bytes / 1_000_000_000) / (duration_seconds / 60)
 
 
 def _language_category(

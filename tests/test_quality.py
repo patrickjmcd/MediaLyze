@@ -182,3 +182,48 @@ def test_visual_density_rewards_the_ideal_and_penalizes_bloated_media() -> None:
     assert bloated_density.actual == 0.12
     assert bloated_density.maximum == 0.09
     assert bloated_density.score == 45.0
+
+
+def test_visual_density_uses_real_file_size_to_penalize_short_bloated_files() -> None:
+    misleading_probe = ProbeResult(
+        raw={},
+        media_format=NormalizedFormat(
+            container_format="matroska",
+            duration=300,
+            bit_rate=6000000,
+            probe_score=100,
+        ),
+        video_streams=[
+            NormalizedVideoStream(
+                stream_index=0,
+                codec="h264",
+                profile="High",
+                width=1920,
+                height=1080,
+                pix_fmt="yuv420p",
+                color_space=None,
+                color_transfer=None,
+                color_primaries=None,
+                frame_rate=24.0,
+                bit_rate=6000000,
+                hdr_type=None,
+            )
+        ],
+    )
+    profile = {
+        "visual_density": {
+            "weight": 10,
+            "minimum": 0.02,
+            "ideal": 0.04,
+            "maximum": 0.08,
+        }
+    }
+
+    breakdown = calculate_quality_score(
+        build_quality_score_input(misleading_probe, size_bytes=8_000_000_000),
+        quality_profile=profile,
+    )
+    density = next(category for category in breakdown.categories if category.key == "visual_density")
+
+    assert density.actual == 1.6
+    assert density.score == 3.0

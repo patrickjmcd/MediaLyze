@@ -440,7 +440,7 @@ def run_scan(
                     media_file.raw_ffprobe_json = payload
                     _replace_analysis(media_file, normalized, subtitles)
                     breakdown = calculate_quality_score(
-                        build_quality_score_input(normalized, subtitles),
+                        build_quality_score_input(normalized, subtitles, size_bytes=media_file.size_bytes),
                         library.quality_profile,
                     )
                     _persist_quality_breakdown(media_file, breakdown)
