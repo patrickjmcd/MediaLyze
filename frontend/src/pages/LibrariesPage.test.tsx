@@ -5,7 +5,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 
 import { AppDataProvider } from "../lib/app-data";
-import { api, DEFAULT_QUALITY_PROFILE, type AppSettings, type BrowseResponse, type LibrarySummary } from "../lib/api";
+import {
+  api,
+  DEFAULT_QUALITY_PROFILE,
+  type AppSettings,
+  type BrowseResponse,
+  type LibrarySummary,
+  type RecentScanJob,
+  type ScanJobDetail,
+} from "../lib/api";
 import { ScanJobsProvider } from "../lib/scan-jobs";
 import { LibrariesPage } from "./LibrariesPage";
 
@@ -56,6 +64,61 @@ function createLibrarySummary(overrides: Partial<LibrarySummary> = {}): LibraryS
   };
 }
 
+function createRecentScanJob(overrides: Partial<RecentScanJob> = {}): RecentScanJob {
+  return {
+    id: 14,
+    library_id: 1,
+    library_name: "Movies",
+    status: "completed",
+    outcome: "successful",
+    job_type: "incremental",
+    trigger_source: "manual",
+    started_at: "2026-03-16T10:00:00Z",
+    finished_at: "2026-03-16T10:03:00Z",
+    duration_seconds: 180,
+    discovered_files: 12,
+    ignored_total: 2,
+    new_files: 3,
+    modified_files: 1,
+    deleted_files: 0,
+    analysis_failed: 0,
+    ...overrides,
+  };
+}
+
+function createScanJobDetail(overrides: Partial<ScanJobDetail> = {}): ScanJobDetail {
+  return {
+    ...createRecentScanJob(),
+    trigger_details: { reason: "user_requested" },
+    scan_summary: {
+      ignore_patterns: ["sample.*"],
+      discovery: {
+        discovered_files: 12,
+        ignored_total: 2,
+        ignored_dir_total: 0,
+        ignored_file_total: 2,
+        ignored_pattern_hits: [{ pattern: "sample.*", count: 2, paths: ["sample.mkv"], truncated_count: 1 }],
+      },
+      changes: {
+        queued_for_analysis: 4,
+        unchanged_files: 8,
+        reanalyzed_incomplete_files: 0,
+        new_files: { count: 3, paths: ["new-a.mkv"], truncated_count: 1 },
+        modified_files: { count: 1, paths: ["changed.mkv"], truncated_count: 0 },
+        deleted_files: { count: 0, paths: [], truncated_count: 0 },
+      },
+      analysis: {
+        queued_for_analysis: 4,
+        analyzed_successfully: 4,
+        analysis_failed: 0,
+        failed_files: [],
+        failed_files_truncated_count: 0,
+      },
+    },
+    ...overrides,
+  };
+}
+
 function renderPage() {
   return render(
     <MemoryRouter>
@@ -73,6 +136,8 @@ beforeEach(() => {
   vi.spyOn(api, "appSettings").mockResolvedValue(createAppSettings());
   vi.spyOn(api, "browse").mockResolvedValue(createBrowseResponse());
   vi.spyOn(api, "activeScanJobs").mockResolvedValue([]);
+  vi.spyOn(api, "recentScanJobs").mockResolvedValue([]);
+  vi.spyOn(api, "scanJobDetail").mockResolvedValue(createScanJobDetail());
   vi.spyOn(api, "updateAppSettings").mockResolvedValue(createAppSettings());
 });
 
@@ -204,6 +269,7 @@ describe("LibrariesPage settings panels", () => {
       "medialyze-settings-panel-state",
       JSON.stringify({
         configuredLibraries: false,
+        recentScanLogs: true,
         libraryStatistics: true,
         createLibrary: true,
         ignorePatterns: false,
@@ -235,11 +301,59 @@ describe("LibrariesPage settings panels", () => {
     expect(window.localStorage.getItem("medialyze-settings-panel-state")).toBe(
       JSON.stringify({
         configuredLibraries: true,
+        recentScanLogs: true,
         libraryStatistics: true,
         createLibrary: true,
         ignorePatterns: true,
         appSettings: false,
       }),
     );
+  });
+
+  it("shows the recent scan logs panel expanded by default", async () => {
+    renderPage();
+
+    const scanLogsToggle = await screen.findByRole("button", { name: /^recent scan logs$/i });
+
+    expect(scanLogsToggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("No completed scans yet.")).toBeInTheDocument();
+  });
+
+  it("renders recent scan log cards and lazy-loads details", async () => {
+    vi.spyOn(api, "recentScanJobs").mockResolvedValue([
+      createRecentScanJob({ outcome: "failed", trigger_source: "watchdog", analysis_failed: 1 }),
+    ]);
+    const detailSpy = vi.spyOn(api, "scanJobDetail").mockResolvedValue(
+      createScanJobDetail({
+        outcome: "failed",
+        trigger_source: "watchdog",
+        trigger_details: { event_count: 2, paths: ["movie.mkv"] },
+        scan_summary: {
+          ...createScanJobDetail().scan_summary,
+          analysis: {
+            queued_for_analysis: 4,
+            analyzed_successfully: 3,
+            analysis_failed: 1,
+            failed_files: [{ path: "broken.mkv", reason: "ffprobe exploded" }],
+            failed_files_truncated_count: 0,
+          },
+        },
+      }),
+    );
+
+    renderPage();
+
+    const jobButton = await screen.findByRole("button", { name: /movies/i });
+    expect(screen.getByText("Failed")).toBeInTheDocument();
+    expect(screen.getByText("Watchdog")).toBeInTheDocument();
+
+    fireEvent.click(jobButton);
+
+    await waitFor(() => expect(detailSpy).toHaveBeenCalledWith(14));
+    expect(await screen.findAllByText("Ignore patterns")).toHaveLength(2);
+    fireEvent.click(screen.getAllByText("Ignore patterns")[1]);
+    expect((await screen.findAllByText("sample.*")).length).toBeGreaterThanOrEqual(2);
+    fireEvent.click(screen.getByText("Files that could not be analyzed"));
+    expect(await screen.findByText("broken.mkv")).toBeInTheDocument();
   });
 });

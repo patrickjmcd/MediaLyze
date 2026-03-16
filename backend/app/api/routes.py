@@ -9,8 +9,14 @@ from backend.app.schemas.app_settings import AppSettingsRead, AppSettingsUpdate
 from backend.app.schemas.browse import BrowseResponse
 from backend.app.schemas.library import LibraryCreate, LibraryStatistics, LibrarySummary, LibraryUpdate
 from backend.app.schemas.media import DashboardResponse, MediaFileDetail, MediaFileQualityScoreDetail, MediaFileTablePage
-from backend.app.schemas.scan import ScanCancelResponse, ScanJobRead, ScanRequest
-from backend.app.models.entities import ScanJob
+from backend.app.schemas.scan import (
+    RecentScanJobRead,
+    ScanCancelResponse,
+    ScanJobDetailRead,
+    ScanJobRead,
+    ScanRequest,
+)
+from backend.app.models.entities import ScanJob, ScanTriggerSource
 from backend.app.services.app_settings import get_app_settings as load_app_settings
 from backend.app.services.app_settings import update_app_settings
 from backend.app.services.browse import browse_media_root
@@ -26,7 +32,13 @@ from backend.app.services.library_service import (
 from backend.app.services.media_search import LibraryFileSearchFilters, SearchValidationError
 from backend.app.services.media_service import get_media_file_detail, get_media_file_quality_score_detail, list_library_files
 from backend.app.services.runtime import ScanRuntimeManager
-from backend.app.services.scan_jobs import list_active_scan_jobs, list_library_scan_jobs, serialize_scan_job
+from backend.app.services.scan_jobs import (
+    get_scan_job_detail,
+    list_active_scan_jobs,
+    list_library_scan_jobs,
+    list_recent_scan_jobs,
+    serialize_scan_job,
+)
 from backend.app.services.stats import build_dashboard
 
 router = APIRouter()
@@ -56,6 +68,22 @@ def dashboard(db: Session = Depends(get_db_session)) -> DashboardResponse:
 @router.get("/scan-jobs/active", response_model=list[ScanJobRead])
 def active_scan_jobs(db: Session = Depends(get_db_session)) -> list[ScanJobRead]:
     return list_active_scan_jobs(db)
+
+
+@router.get("/scan-jobs/recent", response_model=list[RecentScanJobRead])
+def recent_scan_jobs(
+    limit: int = Query(default=20, ge=1, le=50),
+    db: Session = Depends(get_db_session),
+) -> list[RecentScanJobRead]:
+    return list_recent_scan_jobs(db, limit)
+
+
+@router.get("/scan-jobs/{job_id}", response_model=ScanJobDetailRead)
+def scan_job_detail(job_id: int, db: Session = Depends(get_db_session)) -> ScanJobDetailRead:
+    payload = get_scan_job_detail(db, job_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Scan job not found")
+    return payload
 
 
 @router.get("/app-settings", response_model=AppSettingsRead)
@@ -252,7 +280,12 @@ def library_scan(
     if not library_exists(db, library_id):
         raise HTTPException(status_code=404, detail="Library not found")
 
-    job_id, _created = runtime.request_scan(library_id, payload.scan_type)
+    job_id, _created = runtime.request_scan(
+        library_id,
+        payload.scan_type,
+        trigger_source=ScanTriggerSource.manual,
+        trigger_details={"reason": "user_requested"},
+    )
     job = db.get(ScanJob, job_id)
     if job is None:
         raise HTTPException(status_code=500, detail="Failed to load scan job")

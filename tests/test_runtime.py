@@ -11,7 +11,9 @@ os.environ.setdefault("MEDIA_ROOT", tempfile.mkdtemp(prefix="medialyze-media-"))
 
 from backend.app.core.config import Settings
 from backend.app.db.base import Base
-from backend.app.models.entities import JobStatus, Library, LibraryType, ScanJob, ScanMode
+from watchdog.events import FileModifiedEvent
+
+from backend.app.models.entities import JobStatus, Library, LibraryType, ScanJob, ScanMode, ScanTriggerSource
 from backend.app.services import runtime as runtime_module
 
 
@@ -215,3 +217,155 @@ def test_cancel_active_jobs_marks_running_and_queued_jobs_canceled(monkeypatch) 
     assert len(canceled_ids) == 2
     assert all(job.status == JobStatus.canceled for job in jobs)
     assert all(job.finished_at is not None for job in jobs)
+
+
+def test_request_scan_merges_trigger_details_into_existing_active_job(monkeypatch) -> None:
+    session_factory = _session_factory()
+    monkeypatch.setattr(runtime_module, "SessionLocal", session_factory)
+
+    with session_factory() as db:
+        library = Library(
+            name="Movies",
+            path="/tmp/movies",
+            type=LibraryType.movies,
+            scan_mode=ScanMode.manual,
+            scan_config={},
+        )
+        db.add(library)
+        db.commit()
+        library_id = library.id
+
+    runtime = runtime_module.ScanRuntimeManager(Settings())
+    runtime.executor = type(
+        "ExecutorStub",
+        (),
+        {"submit": staticmethod(lambda fn, job_id, active_library_id: None)},
+    )()
+
+    first_job_id, _ = runtime.request_scan(
+        library_id,
+        "incremental",
+        trigger_source=ScanTriggerSource.manual,
+        trigger_details={"reason": "user_requested"},
+    )
+    second_job_id, created = runtime.request_scan(
+        library_id,
+        "incremental",
+        trigger_source=ScanTriggerSource.watchdog,
+        trigger_details={"event_count": 2},
+    )
+
+    with session_factory() as db:
+        job = db.get(ScanJob, first_job_id)
+
+    assert created is False
+    assert second_job_id == first_job_id
+    assert job is not None
+    assert job.trigger_source == ScanTriggerSource.manual
+    assert job.trigger_details["coalesced_trigger_count"] == 1
+    assert job.trigger_details["coalesced_triggers"] == [
+        {"trigger_source": "watchdog", "event_count": 2}
+    ]
+
+
+def test_handle_watch_event_aggregates_paths_and_requests_watchdog_scan(monkeypatch, tmp_path) -> None:
+    session_factory = _session_factory()
+    monkeypatch.setattr(runtime_module, "SessionLocal", session_factory)
+
+    library_root = tmp_path / "movies"
+    library_root.mkdir()
+
+    with session_factory() as db:
+        library = Library(
+            name="Movies",
+            path=str(library_root),
+            type=LibraryType.movies,
+            scan_mode=ScanMode.watch,
+            scan_config={"debounce_seconds": 9},
+        )
+        db.add(library)
+        db.commit()
+        library_id = library.id
+
+    class TimerStub:
+        def __init__(self, interval, callback):
+            self.interval = interval
+            self.callback = callback
+            self.daemon = False
+
+        def cancel(self) -> None:
+            return None
+
+        def start(self) -> None:
+            return None
+
+    recorded_requests: list[tuple[int, str, ScanTriggerSource, dict | None]] = []
+
+    monkeypatch.setattr(runtime_module, "Timer", TimerStub)
+
+    runtime = runtime_module.ScanRuntimeManager(Settings())
+
+    def request_scan(library_id: int, scan_type: str = "incremental", *, trigger_source, trigger_details=None):
+        recorded_requests.append((library_id, scan_type, trigger_source, trigger_details))
+        return 1, True
+
+    runtime.request_scan = request_scan  # type: ignore[method-assign]
+
+    runtime.handle_watch_event(library_id, FileModifiedEvent(str(library_root / "movie.mkv")))
+    runtime.handle_watch_event(library_id, FileModifiedEvent(str(library_root / "series" / "episode.mkv")))
+    runtime._request_watch_scan(library_id)
+
+    assert recorded_requests == [
+        (
+            library_id,
+            "incremental",
+            ScanTriggerSource.watchdog,
+            {
+                "debounce_seconds": 9,
+                "event_count": 2,
+                "event_types": ["modified"],
+                "paths": ["movie.mkv", "series/episode.mkv"],
+                "paths_truncated_count": 0,
+            },
+        )
+    ]
+
+
+def test_ensure_scheduled_job_uses_scheduled_trigger_details(monkeypatch) -> None:
+    runtime = runtime_module.ScanRuntimeManager(Settings())
+
+    captured: dict = {}
+
+    class SchedulerStub:
+        running = False
+
+        def add_job(self, func, **kwargs):
+            captured["func"] = func
+            captured["kwargs"] = kwargs
+
+        def get_job(self, job_id):
+            return None
+
+        def remove_job(self, job_id):
+            return None
+
+    runtime.scheduler = SchedulerStub()
+
+    library = Library(
+        id=12,
+        name="Movies",
+        path="/tmp/movies",
+        type=LibraryType.movies,
+        scan_mode=ScanMode.scheduled,
+        scan_config={"interval_minutes": 30},
+    )
+
+    runtime._ensure_scheduled_job(library)
+
+    assert captured["func"] == runtime.request_scan
+    assert captured["kwargs"]["kwargs"] == {
+        "library_id": 12,
+        "scan_type": "incremental",
+        "trigger_source": ScanTriggerSource.scheduled,
+        "trigger_details": {"interval_minutes": 30},
+    }

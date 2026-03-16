@@ -1,10 +1,33 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from backend.app.models.entities import JobStatus, ScanJob
-from backend.app.schemas.scan import ScanJobRead
+from backend.app.schemas.scan import RecentScanJobRead, ScanJobDetailRead, ScanJobRead, ScanSummaryRead
+
+
+def _duration_seconds(started_at: datetime | None, finished_at: datetime | None) -> float | None:
+    if started_at is None or finished_at is None:
+        return None
+    return max(0.0, (finished_at - started_at).total_seconds())
+
+
+def _normalize_scan_summary(value: dict | None) -> ScanSummaryRead:
+    try:
+        return ScanSummaryRead.model_validate(value or {})
+    except Exception:
+        return ScanSummaryRead()
+
+
+def _scan_outcome(scan_job: ScanJob) -> str:
+    if scan_job.status == JobStatus.completed:
+        return "successful"
+    if scan_job.status == JobStatus.canceled:
+        return "canceled"
+    return "failed"
 
 
 def serialize_scan_job(scan_job: ScanJob) -> ScanJobRead:
@@ -86,6 +109,38 @@ def serialize_scan_job(scan_job: ScanJob) -> ScanJobRead:
     )
 
 
+def serialize_recent_scan_job(scan_job: ScanJob) -> RecentScanJobRead:
+    summary = _normalize_scan_summary(scan_job.scan_summary)
+    return RecentScanJobRead(
+        id=scan_job.id,
+        library_id=scan_job.library_id,
+        library_name=scan_job.library.name if scan_job.library else None,
+        status=scan_job.status,
+        outcome=_scan_outcome(scan_job),
+        job_type=scan_job.job_type,
+        trigger_source=scan_job.trigger_source,
+        started_at=scan_job.started_at,
+        finished_at=scan_job.finished_at,
+        duration_seconds=_duration_seconds(scan_job.started_at, scan_job.finished_at),
+        discovered_files=summary.discovery.discovered_files,
+        ignored_total=summary.discovery.ignored_total,
+        new_files=summary.changes.new_files.count,
+        modified_files=summary.changes.modified_files.count,
+        deleted_files=summary.changes.deleted_files.count,
+        analysis_failed=summary.analysis.analysis_failed,
+    )
+
+
+def serialize_scan_job_detail(scan_job: ScanJob) -> ScanJobDetailRead:
+    summary = _normalize_scan_summary(scan_job.scan_summary)
+    recent = serialize_recent_scan_job(scan_job)
+    return ScanJobDetailRead(
+        **recent.model_dump(),
+        trigger_details=scan_job.trigger_details or {},
+        scan_summary=summary,
+    )
+
+
 def list_active_scan_jobs(db: Session) -> list[ScanJobRead]:
     jobs = db.scalars(
         select(ScanJob)
@@ -112,3 +167,31 @@ def list_library_scan_jobs(db: Session, library_id: int, limit: int = 10) -> lis
         .limit(limit)
     ).all()
     return [serialize_scan_job(job) for job in jobs]
+
+
+def list_recent_scan_jobs(db: Session, limit: int = 20) -> list[RecentScanJobRead]:
+    jobs = db.scalars(
+        select(ScanJob)
+        .where(
+            ScanJob.status.in_([JobStatus.completed, JobStatus.failed, JobStatus.canceled]),
+            ScanJob.job_type.in_(["incremental", "full"]),
+        )
+        .options(selectinload(ScanJob.library))
+        .order_by(ScanJob.finished_at.desc(), ScanJob.id.desc())
+        .limit(limit)
+    ).all()
+    return [serialize_recent_scan_job(job) for job in jobs]
+
+
+def get_scan_job_detail(db: Session, job_id: int) -> ScanJobDetailRead | None:
+    job = db.scalar(
+        select(ScanJob)
+        .where(
+            ScanJob.id == job_id,
+            ScanJob.job_type.in_(["incremental", "full"]),
+        )
+        .options(selectinload(ScanJob.library))
+    )
+    if job is None:
+        return None
+    return serialize_scan_job_detail(job)

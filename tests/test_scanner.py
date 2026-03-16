@@ -31,9 +31,10 @@ def test_iter_media_files_skips_symlink_directories(tmp_path: Path) -> None:
         # Symlink creation may be unavailable on some environments.
         pass
 
-    files = _iter_media_files(media_dir, (".mkv", ".mp4"))
+    discovery = _iter_media_files(media_dir, (".mkv", ".mp4"))
 
-    assert files == [nested_dir / "movie.mkv"]
+    assert discovery.files == [nested_dir / "movie.mkv"]
+    assert discovery.ignored_total == 0
 
 
 def test_incremental_scan_reanalyzes_files_with_incomplete_metadata(tmp_path: Path, monkeypatch) -> None:
@@ -217,6 +218,9 @@ def test_scan_ignores_matching_relative_paths_and_external_subtitles(tmp_path: P
     assert job.files_scanned == 1
     assert [media_file.relative_path for media_file in indexed_files] == ["movie.mkv"]
     assert [subtitle.path for subtitle in subtitles] == ["movie.en.srt"]
+    assert job.scan_summary["ignore_patterns"] == ["*/extras/*", "sample.*", "*.skip.srt"]
+    assert job.scan_summary["discovery"]["ignored_total"] == 3
+    assert job.scan_summary["changes"]["new_files"]["count"] == 1
 
 
 def test_incremental_scan_removes_existing_files_that_become_ignored(tmp_path: Path, monkeypatch) -> None:
@@ -290,6 +294,7 @@ def test_incremental_scan_removes_existing_files_that_become_ignored(tmp_path: P
     assert second_files_total == 0
     assert second_files_scanned == 0
     assert indexed_after == []
+    assert second_job.scan_summary["changes"]["deleted_files"]["count"] == 1
 
 
 def test_scan_merges_user_and_default_ignore_patterns(tmp_path: Path, monkeypatch) -> None:
@@ -433,3 +438,46 @@ def test_incremental_scan_updates_existing_files_when_size_or_mtime_changes(tmp_
     assert media_after.size_bytes == stat.st_size
     assert media_after.mtime == stat.st_mtime
     assert media_after.size_bytes != first_size or media_after.mtime != first_mtime
+    assert second_job.scan_summary["changes"]["modified_files"]["count"] == 1
+
+
+def test_scan_summary_records_failed_files_with_short_reason(tmp_path: Path, monkeypatch) -> None:
+    media_dir = tmp_path / "library"
+    media_dir.mkdir()
+    (media_dir / "broken.mkv").write_text("video")
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+    def fail_ffprobe(_file_path, _ffprobe_path):
+        raise RuntimeError("ffprobe exploded\nwith internal details")
+
+    monkeypatch.setattr("backend.app.services.scanner.run_ffprobe", fail_ffprobe)
+    monkeypatch.setattr("backend.app.services.scanner.detect_external_subtitles", lambda file_path, extensions: [])
+
+    settings = Settings(
+        config_path=tmp_path / "config",
+        media_root=tmp_path,
+        ffprobe_worker_count=1,
+        scan_commit_batch_size=1,
+    )
+
+    with session_factory() as db:
+        library = Library(
+            name="Movies",
+            path=str(media_dir),
+            type=LibraryType.movies,
+            scan_mode=ScanMode.manual,
+            scan_config={},
+        )
+        db.add(library)
+        db.commit()
+
+        job = run_scan(db, settings, library.id, "incremental")
+
+    assert job.status.value == "failed"
+    assert job.scan_summary["analysis"]["analysis_failed"] == 1
+    assert job.scan_summary["analysis"]["failed_files"] == [
+        {"path": "broken.mkv", "reason": "ffprobe exploded"}
+    ]

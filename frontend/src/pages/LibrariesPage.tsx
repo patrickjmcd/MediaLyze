@@ -7,7 +7,14 @@ import { AsyncPanel } from "../components/AsyncPanel";
 import { PathBrowser } from "../components/PathBrowser";
 import { TooltipTrigger } from "../components/TooltipTrigger";
 import { useAppData } from "../lib/app-data";
-import { api, DEFAULT_QUALITY_PROFILE, type LibrarySummary, type QualityProfile } from "../lib/api";
+import {
+  api,
+  DEFAULT_QUALITY_PROFILE,
+  type LibrarySummary,
+  type QualityProfile,
+  type RecentScanJob,
+  type ScanJobDetail,
+} from "../lib/api";
 import { formatBytes, formatDate, formatDuration } from "../lib/format";
 import { getIgnorePatternSectionState, saveIgnorePatternSectionState } from "../lib/ignore-pattern-sections";
 import {
@@ -163,6 +170,71 @@ function toPersistedIgnorePatterns(payload: {
   };
 }
 
+function formatScanJobType(
+  t: (key: string, options?: Record<string, unknown>) => string,
+  value: string,
+) {
+  return value === "full" ? t("scanLogs.jobTypeFull") : t("scanLogs.jobTypeIncremental");
+}
+
+function formatTriggerSource(
+  t: (key: string, options?: Record<string, unknown>) => string,
+  value: RecentScanJob["trigger_source"],
+) {
+  if (value === "scheduled") {
+    return t("scanLogs.triggerScheduled");
+  }
+  if (value === "watchdog") {
+    return t("scanLogs.triggerWatchdog");
+  }
+  return t("scanLogs.triggerManual");
+}
+
+function formatOutcome(
+  t: (key: string, options?: Record<string, unknown>) => string,
+  value: RecentScanJob["outcome"],
+) {
+  if (value === "canceled") {
+    return t("scanLogs.outcomeCanceled");
+  }
+  if (value === "failed") {
+    return t("scanLogs.outcomeFailed");
+  }
+  return t("scanLogs.outcomeSuccessful");
+}
+
+function summarizeTriggerDetails(
+  t: (key: string, options?: Record<string, unknown>) => string,
+  job: RecentScanJob | ScanJobDetail,
+) {
+  if (job.trigger_source === "scheduled") {
+    const intervalMinutes = Number((job as ScanJobDetail).trigger_details?.interval_minutes ?? 0);
+    return intervalMinutes > 0
+      ? t("scanLogs.triggerScheduledSummary", { minutes: intervalMinutes })
+      : t("scanLogs.triggerScheduled");
+  }
+  if (job.trigger_source === "watchdog") {
+    const triggerDetails = (job as ScanJobDetail).trigger_details ?? {};
+    const eventCount = Number(triggerDetails.event_count ?? 0);
+    return eventCount > 0
+      ? t("scanLogs.triggerWatchdogSummary", { count: eventCount })
+      : t("scanLogs.triggerWatchdog");
+  }
+  return t("scanLogs.triggerManualSummary");
+}
+
+function compactScanValues(values: string[], limit = 2): string {
+  if (values.length === 0) {
+    return "";
+  }
+  const visible = values.slice(0, limit);
+  return values.length > limit ? `${visible.join(", ")}, ...` : visible.join(", ");
+}
+
+function scanLogTitle(job: RecentScanJob) {
+  return formatDate(job.finished_at ?? job.started_at);
+}
+
 export function LibrariesPage() {
   const { t, i18n } = useTranslation();
   const {
@@ -189,6 +261,13 @@ export function LibrariesPage() {
   const [libraryMessages, setLibraryMessages] = useState<Record<number, string | null>>({});
   const [statisticsSettings, setStatisticsSettings] = useState<LibraryStatisticsSettings>(() => getLibraryStatisticsSettings());
   const [settingsPanelState, setSettingsPanelState] = useState(() => getSettingsPanelState());
+  const [recentScanJobs, setRecentScanJobs] = useState<RecentScanJob[]>([]);
+  const [isLoadingRecentScanJobs, setIsLoadingRecentScanJobs] = useState(true);
+  const [recentScanJobsError, setRecentScanJobsError] = useState<string | null>(null);
+  const [expandedScanJobIds, setExpandedScanJobIds] = useState<Record<number, boolean>>({});
+  const [scanJobDetails, setScanJobDetails] = useState<Record<number, ScanJobDetail>>({});
+  const [scanJobDetailLoading, setScanJobDetailLoading] = useState<Record<number, boolean>>({});
+  const [scanJobDetailErrors, setScanJobDetailErrors] = useState<Record<number, string | null>>({});
   const [draggedStatisticId, setDraggedStatisticId] = useState<LibraryStatisticId | null>(null);
   const [dropTargetStatisticId, setDropTargetStatisticId] = useState<LibraryStatisticId | null>(null);
   const [form, setForm] = useState(EMPTY_FORM);
@@ -211,6 +290,28 @@ export function LibrariesPage() {
   const { activeJobs, hasActiveJobs, refresh, trackJob } = useScanJobs();
   const hadActiveJobsRef = useRef(hasActiveJobs);
   const orderedStatistics = getOrderedLibraryStatisticDefinitions(statisticsSettings);
+
+  const refreshRecentScanJobs = (showLoading = false) => {
+    if (showLoading) {
+      setIsLoadingRecentScanJobs(true);
+    }
+    return api
+      .recentScanJobs()
+      .then((payload) => {
+        setRecentScanJobs(payload);
+        setRecentScanJobsError(null);
+        return payload;
+      })
+      .catch((reason: Error) => {
+        setRecentScanJobsError(reason.message);
+        throw reason;
+      })
+      .finally(() => {
+        if (showLoading) {
+          setIsLoadingRecentScanJobs(false);
+        }
+      });
+  };
 
   const refreshLibraries = (showLoading = false, force = false) => {
     if (showLoading) {
@@ -241,6 +342,10 @@ export function LibrariesPage() {
   }, [librariesLoaded]);
 
   useEffect(() => {
+    void refreshRecentScanJobs(true).catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
     setSettingsForms((current) => {
       const next = { ...current };
       for (const library of libraries) {
@@ -255,6 +360,7 @@ export function LibrariesPage() {
   useEffect(() => {
     if (hadActiveJobsRef.current && !hasActiveJobs) {
       void refreshLibraries(false, true).catch(() => undefined);
+      void refreshRecentScanJobs().catch(() => undefined);
     }
     hadActiveJobsRef.current = hasActiveJobs;
   }, [hasActiveJobs]);
@@ -489,6 +595,28 @@ export function LibrariesPage() {
     );
   }
 
+  async function toggleScanJobExpansion(jobId: number) {
+    const nextOpen = !expandedScanJobIds[jobId];
+    setExpandedScanJobIds((current) => ({ ...current, [jobId]: nextOpen }));
+    if (!nextOpen || scanJobDetails[jobId] || scanJobDetailLoading[jobId]) {
+      return;
+    }
+    setScanJobDetailLoading((current) => ({ ...current, [jobId]: true }));
+    setScanJobDetailErrors((current) => ({ ...current, [jobId]: null }));
+    try {
+      const payload = await api.scanJobDetail(jobId);
+      setScanJobDetails((current) => ({ ...current, [jobId]: payload }));
+    } catch (reason) {
+      setScanJobDetailErrors((current) => ({ ...current, [jobId]: (reason as Error).message }));
+    } finally {
+      setScanJobDetailLoading((current) => {
+        const next = { ...current };
+        delete next[jobId];
+        return next;
+      });
+    }
+  }
+
   async function persistAppSettingsSnapshot(
     nextUserPatterns: string[],
     nextDefaultPatterns: string[],
@@ -662,6 +790,253 @@ export function LibrariesPage() {
     updateStatisticsSettings((current) => moveLibraryStatistic(current, draggedStatisticId, targetId));
     setDraggedStatisticId(null);
     setDropTargetStatisticId(null);
+  }
+
+  function renderScanPathList(
+    title: string,
+    count: number,
+    paths: string[],
+    truncatedCount = 0,
+  ) {
+    return (
+      <details className="scan-log-detail-block scan-log-collapsible-block">
+        <summary className="scan-log-collapse-toggle">
+          <span className="scan-log-collapse-copy">
+            <strong>{title}</strong>
+          </span>
+          <span className="scan-log-collapse-meta">
+            <span className="badge">{count}</span>
+            <ChevronRight aria-hidden="true" className="nav-icon scan-log-collapse-icon" />
+          </span>
+        </summary>
+        <div className="scan-log-collapse-content">
+          {paths.length > 0 ? (
+            <div className="scan-log-path-list">
+              {paths.map((path) => (
+                <code key={`${title}-${path}`} className="scan-log-path">
+                  {path}
+                </code>
+              ))}
+            </div>
+          ) : (
+            <div className="notice scan-log-empty-detail">{t("scanLogs.none")}</div>
+          )}
+          {truncatedCount > 0 ? <div className="subtitle">{t("scanLogs.moreEntries", { count: truncatedCount })}</div> : null}
+        </div>
+      </details>
+    );
+  }
+
+  function renderScanJobDetail(job: RecentScanJob) {
+    const detail = scanJobDetails[job.id];
+    if (scanJobDetailLoading[job.id]) {
+      return <div className="notice">{t("scanLogs.loadingDetail")}</div>;
+    }
+    if (scanJobDetailErrors[job.id]) {
+      return <div className="alert">{scanJobDetailErrors[job.id]}</div>;
+    }
+    if (!detail) {
+      return null;
+    }
+
+    const triggerDetails = detail.trigger_details;
+    const coalescedTriggers = Array.isArray(triggerDetails.coalesced_triggers) ? triggerDetails.coalesced_triggers : [];
+    const watchdogPaths = Array.isArray(triggerDetails.paths)
+      ? triggerDetails.paths.filter((value): value is string => typeof value === "string")
+      : [];
+    const patternHits = detail.scan_summary.discovery.ignored_pattern_hits;
+    const ignorePatternsSummary = compactScanValues(detail.scan_summary.ignore_patterns);
+    const patternHitsSummary = compactScanValues(patternHits.map((hit) => hit.pattern));
+
+    return (
+      <div className="scan-log-detail">
+        <details className="scan-log-detail-block scan-log-collapsible-block">
+          <summary className="scan-log-collapse-toggle">
+            <span className="scan-log-collapse-copy">
+              <strong>{t("scanLogs.triggerReason")}</strong>
+              <span className="scan-log-collapse-summary">{formatTriggerSource(t, detail.trigger_source)}</span>
+            </span>
+            <span className="scan-log-collapse-meta">
+              {job.trigger_source === "watchdog" && typeof triggerDetails.event_count === "number" ? (
+                <span className="badge">{triggerDetails.event_count}</span>
+              ) : null}
+              <ChevronRight aria-hidden="true" className="nav-icon scan-log-collapse-icon" />
+            </span>
+          </summary>
+          <div className="scan-log-collapse-content">
+            <div className="scan-log-trigger-copy">{summarizeTriggerDetails(t, detail)}</div>
+            {job.trigger_source === "scheduled" && typeof triggerDetails.interval_minutes === "number" ? (
+              <div className="subtitle">{t("scanLogs.intervalMinutes", { minutes: triggerDetails.interval_minutes })}</div>
+            ) : null}
+            {job.trigger_source === "watchdog" && typeof triggerDetails.event_count === "number" ? (
+              <div className="subtitle">{t("scanLogs.watchEvents", { count: triggerDetails.event_count })}</div>
+            ) : null}
+            {watchdogPaths.length > 0 ? (
+              <div className="scan-log-scroll-area">
+                <div className="scan-log-path-list">
+                  {watchdogPaths.map((path) => (
+                    <code key={`trigger-${detail.id}-${path}`} className="scan-log-path">
+                      {path}
+                    </code>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+            {coalescedTriggers.length > 0 ? (
+              <div className="subtitle">{t("scanLogs.coalescedTriggers", { count: coalescedTriggers.length })}</div>
+            ) : null}
+          </div>
+        </details>
+
+        <details className="scan-log-detail-block scan-log-collapsible-block">
+          <summary className="scan-log-collapse-toggle">
+            <span className="scan-log-collapse-copy">
+              <strong>{t("scanLogs.ignorePatterns")}</strong>
+              {ignorePatternsSummary ? <span className="scan-log-collapse-summary">{ignorePatternsSummary}</span> : null}
+            </span>
+            <span className="scan-log-collapse-meta">
+              <span className="badge">{detail.scan_summary.ignore_patterns.length}</span>
+              <ChevronRight aria-hidden="true" className="nav-icon scan-log-collapse-icon" />
+            </span>
+          </summary>
+          <div className="scan-log-collapse-content">
+            {detail.scan_summary.ignore_patterns.length > 0 ? (
+              <div className="scan-log-scroll-area">
+                <div className="scan-log-path-list">
+                  {detail.scan_summary.ignore_patterns.map((pattern) => (
+                    <code key={`pattern-${detail.id}-${pattern}`} className="scan-log-path">
+                      {pattern}
+                    </code>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="notice scan-log-empty-detail">{t("scanLogs.none")}</div>
+            )}
+          </div>
+        </details>
+
+        <div className="scan-log-summary-meta scan-log-summary-meta-detail">
+          <span>{t("scanLogs.startedAt")}: {formatDate(detail.started_at)}</span>
+          <span>{t("scanLogs.finishedAt")}: {formatDate(detail.finished_at)}</span>
+          <span>{t("scanLogs.duration")}: {formatDuration(detail.duration_seconds)}</span>
+        </div>
+
+        <div className="scan-log-summary-grid">
+          <div className="scan-log-stat">
+            <strong>{detail.scan_summary.discovery.discovered_files}</strong>
+            <span>{t("scanLogs.metricDetected")}</span>
+          </div>
+          <div className="scan-log-stat">
+            <strong>{detail.scan_summary.discovery.ignored_total}</strong>
+            <span>{t("scanLogs.metricIgnored")}</span>
+          </div>
+          <div className="scan-log-stat">
+            <strong>{detail.scan_summary.analysis.analyzed_successfully}</strong>
+            <span>{t("scanLogs.metricAnalyzed")}</span>
+          </div>
+          <div className="scan-log-stat">
+            <strong>{detail.scan_summary.analysis.analysis_failed}</strong>
+            <span>{t("scanLogs.metricFailed")}</span>
+          </div>
+        </div>
+
+        {patternHits.length > 0 ? (
+          <details className="scan-log-detail-block scan-log-collapsible-block">
+            <summary className="scan-log-collapse-toggle">
+              <span className="scan-log-collapse-copy">
+                <strong>{t("scanLogs.patternHits")}</strong>
+                {patternHitsSummary ? <span className="scan-log-collapse-summary">{patternHitsSummary}</span> : null}
+              </span>
+              <span className="scan-log-collapse-meta">
+                <span className="badge">{patternHits.length}</span>
+                <ChevronRight aria-hidden="true" className="nav-icon scan-log-collapse-icon" />
+              </span>
+          </summary>
+          <div className="scan-log-collapse-content">
+              <div className="scan-log-scroll-area">
+                <div className="scan-log-pattern-list">
+                  {patternHits.map((hit) => (
+                    <div className="scan-log-pattern-card" key={`${detail.id}-${hit.pattern}`}>
+                      <div className="scan-log-detail-title">
+                        <code>{hit.pattern}</code>
+                        <span className="badge">{hit.count}</span>
+                      </div>
+                      {hit.paths.length > 0 ? (
+                        <div className="scan-log-path-list">
+                          {hit.paths.map((path) => (
+                            <code key={`${hit.pattern}-${path}`} className="scan-log-path">
+                              {path}
+                            </code>
+                          ))}
+                        </div>
+                      ) : null}
+                      {hit.truncated_count > 0 ? (
+                        <div className="subtitle">{t("scanLogs.moreEntries", { count: hit.truncated_count })}</div>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </details>
+        ) : null}
+
+        <div className="scan-log-detail-grid">
+          {renderScanPathList(
+            t("scanLogs.newFiles"),
+            detail.scan_summary.changes.new_files.count,
+            detail.scan_summary.changes.new_files.paths,
+            detail.scan_summary.changes.new_files.truncated_count,
+          )}
+          {renderScanPathList(
+            t("scanLogs.changedFiles"),
+            detail.scan_summary.changes.modified_files.count,
+            detail.scan_summary.changes.modified_files.paths,
+            detail.scan_summary.changes.modified_files.truncated_count,
+          )}
+          {renderScanPathList(
+            t("scanLogs.deletedFiles"),
+            detail.scan_summary.changes.deleted_files.count,
+            detail.scan_summary.changes.deleted_files.paths,
+            detail.scan_summary.changes.deleted_files.truncated_count,
+          )}
+        </div>
+
+        <details className="scan-log-detail-block scan-log-collapsible-block">
+          <summary className="scan-log-collapse-toggle">
+            <span className="scan-log-collapse-copy">
+              <strong>{t("scanLogs.failedFiles")}</strong>
+            </span>
+            <span className="scan-log-collapse-meta">
+              <span className="badge">{detail.scan_summary.analysis.analysis_failed}</span>
+              <ChevronRight aria-hidden="true" className="nav-icon scan-log-collapse-icon" />
+            </span>
+          </summary>
+          <div className="scan-log-collapse-content">
+            {detail.scan_summary.analysis.failed_files.length > 0 ? (
+              <div className="scan-log-scroll-area">
+                <div className="scan-log-issue-list">
+                  {detail.scan_summary.analysis.failed_files.map((entry) => (
+                    <div className="scan-log-issue" key={`${detail.id}-${entry.path}`}>
+                      <code className="scan-log-path">{entry.path}</code>
+                      <span>{entry.reason}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="notice scan-log-empty-detail">{t("scanLogs.none")}</div>
+            )}
+            {detail.scan_summary.analysis.failed_files_truncated_count > 0 ? (
+              <div className="subtitle">
+                {t("scanLogs.moreEntries", { count: detail.scan_summary.analysis.failed_files_truncated_count })}
+              </div>
+            ) : null}
+          </div>
+        </details>
+      </div>
+    );
   }
 
   function renderIgnorePatternSection(
@@ -1315,6 +1690,60 @@ export function LibrariesPage() {
                 </div>
               ))}
             </div>
+          </AsyncPanel>
+
+          <AsyncPanel
+            title={t("scanLogs.title")}
+            subtitle={t("scanLogs.subtitle")}
+            loading={isLoadingRecentScanJobs}
+            error={recentScanJobsError}
+            collapseState={{
+              collapsed: !settingsPanelState.recentScanLogs,
+              onToggle: () => toggleSettingsPanel("recentScanLogs"),
+              bodyId: "recent-scan-logs-panel-body",
+            }}
+          >
+            {recentScanJobs.length === 0 ? (
+              <div className="notice">{t("scanLogs.empty")}</div>
+            ) : (
+              <div className="scan-log-list">
+                {recentScanJobs.map((job) => {
+                  const expanded = Boolean(expandedScanJobIds[job.id]);
+                  return (
+                    <div className="media-card scan-log-card" key={job.id}>
+                      <button
+                        type="button"
+                        className="scan-log-summary"
+                        aria-expanded={expanded}
+                        onClick={() => void toggleScanJobExpansion(job.id)}
+                      >
+                        <div className="scan-log-summary-head">
+                          <div className="scan-log-summary-copy">
+                            <strong>{scanLogTitle(job)}</strong>
+                            <span>{job.library_name ?? t("scanLogs.unknownLibrary")}</span>
+                          </div>
+                          <div className="meta-tags">
+                            <span className={`badge scan-log-outcome badge-${job.outcome}`}>
+                              {formatOutcome(t, job.outcome)}
+                            </span>
+                            <span className="badge">{formatTriggerSource(t, job.trigger_source)}</span>
+                            {job.job_type === "full" ? (
+                              <span className="badge">{formatScanJobType(t, job.job_type)}</span>
+                            ) : null}
+                            {expanded ? (
+                              <ChevronDown aria-hidden="true" className="nav-icon" />
+                            ) : (
+                              <ChevronRight aria-hidden="true" className="nav-icon" />
+                            )}
+                          </div>
+                        </div>
+                      </button>
+                      {expanded ? renderScanJobDetail(job) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </AsyncPanel>
 
           <AsyncPanel

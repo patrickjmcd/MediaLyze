@@ -221,6 +221,77 @@ export type ScanJob = {
   phase_detail: string | null;
 };
 
+export type ScanTriggerSource = "manual" | "scheduled" | "watchdog";
+export type ScanOutcome = "successful" | "failed" | "canceled";
+
+export type ScanFileList = {
+  count: number;
+  paths: string[];
+  truncated_count: number;
+};
+
+export type ScanFileIssue = {
+  path: string;
+  reason: string;
+};
+
+export type ScanPatternHit = {
+  pattern: string;
+  count: number;
+  paths: string[];
+  truncated_count: number;
+};
+
+export type ScanSummary = {
+  ignore_patterns: string[];
+  discovery: {
+    discovered_files: number;
+    ignored_total: number;
+    ignored_dir_total: number;
+    ignored_file_total: number;
+    ignored_pattern_hits: ScanPatternHit[];
+  };
+  changes: {
+    queued_for_analysis: number;
+    unchanged_files: number;
+    reanalyzed_incomplete_files: number;
+    new_files: ScanFileList;
+    modified_files: ScanFileList;
+    deleted_files: ScanFileList;
+  };
+  analysis: {
+    queued_for_analysis: number;
+    analyzed_successfully: number;
+    analysis_failed: number;
+    failed_files: ScanFileIssue[];
+    failed_files_truncated_count: number;
+  };
+};
+
+export type RecentScanJob = {
+  id: number;
+  library_id: number;
+  library_name: string | null;
+  status: string;
+  outcome: ScanOutcome;
+  job_type: string;
+  trigger_source: ScanTriggerSource;
+  started_at: string | null;
+  finished_at: string | null;
+  duration_seconds: number | null;
+  discovered_files: number;
+  ignored_total: number;
+  new_files: number;
+  modified_files: number;
+  deleted_files: number;
+  analysis_failed: number;
+};
+
+export type ScanJobDetail = RecentScanJob & {
+  trigger_details: Record<string, unknown>;
+  scan_summary: ScanSummary;
+};
+
 export type ScanCancelResponse = {
   canceled_jobs: number;
 };
@@ -253,6 +324,8 @@ export const api = {
   appSettings: () => request<AppSettings>("/app-settings"),
   dashboard: () => request<DashboardResponse>("/dashboard"),
   activeScanJobs: () => request<ScanJob[]>("/scan-jobs/active"),
+  recentScanJobs: (limit = 20) => request<RecentScanJob[]>(`/scan-jobs/recent?limit=${limit}`),
+  scanJobDetail: (jobId: string | number) => request<ScanJobDetail>(`/scan-jobs/${jobId}`),
   libraries: () => request<LibrarySummary[]>("/libraries"),
   librarySummary: (id: string | number, signal?: AbortSignal) =>
     request<LibrarySummary>(`/libraries/${id}/summary`, { signal }),

@@ -89,6 +89,11 @@ SQLITE_ADDITIVE_COLUMNS: dict[str, dict[str, str]] = {
         "language": "ALTER TABLE external_subtitles ADD COLUMN language VARCHAR(16)",
         "format": "ALTER TABLE external_subtitles ADD COLUMN format VARCHAR(32)",
     },
+    "scan_jobs": {
+        "trigger_source": "ALTER TABLE scan_jobs ADD COLUMN trigger_source VARCHAR(16) NOT NULL DEFAULT 'manual'",
+        "trigger_details": "ALTER TABLE scan_jobs ADD COLUMN trigger_details JSON NOT NULL DEFAULT '{}'",
+        "scan_summary": "ALTER TABLE scan_jobs ADD COLUMN scan_summary JSON NOT NULL DEFAULT '{}'",
+    },
 }
 
 SQLITE_INDEX_STATEMENTS: tuple[str, ...] = (

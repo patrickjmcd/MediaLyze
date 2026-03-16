@@ -49,6 +49,12 @@ class JobStatus(str, Enum):
     failed = "failed"
 
 
+class ScanTriggerSource(str, Enum):
+    manual = "manual"
+    scheduled = "scheduled"
+    watchdog = "watchdog"
+
+
 class Library(TimestampMixin, Base):
     __tablename__ = "libraries"
 
@@ -268,5 +274,12 @@ class ScanJob(Base):
     errors: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    trigger_source: Mapped[ScanTriggerSource] = mapped_column(
+        SqlEnum(ScanTriggerSource, native_enum=False),
+        default=ScanTriggerSource.manual,
+        nullable=False,
+    )
+    trigger_details: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    scan_summary: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
 
     library: Mapped[Library] = relationship(back_populates="scan_jobs")
