@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from dataclasses import dataclass, field
+from fnmatch import fnmatchcase
+import logging
 import os
 from pathlib import Path
-import traceback
 
 from sqlalchemy import delete, or_, select
 from sqlalchemy.orm import Session, selectinload
@@ -20,6 +22,7 @@ from backend.app.models.entities import (
     MediaFormat,
     ScanJob,
     ScanStatus,
+    ScanTriggerSource,
     SubtitleStream,
     VideoStream,
 )
@@ -35,13 +38,136 @@ from backend.app.services.subtitles import detect_external_subtitles
 from backend.app.utils.glob_patterns import matches_ignore_pattern
 from backend.app.utils.time import utc_now
 
+logger = logging.getLogger(__name__)
+MAX_FILE_LIST_SAMPLE_SIZE = 50
+MAX_FAILED_FILE_SAMPLE_SIZE = 200
+MAX_IGNORE_PATTERN_SAMPLE_SIZE = 10
+
 
 class ScanCanceled(Exception):
     pass
 
 
+@dataclass
+class PatternHit:
+    count: int = 0
+    paths: list[str] = field(default_factory=list)
+    truncated_count: int = 0
+
+
+@dataclass
+class DiscoveryResult:
+    files: list[Path]
+    ignored_total: int = 0
+    ignored_dir_total: int = 0
+    ignored_file_total: int = 0
+    ignored_pattern_hits: dict[str, PatternHit] = field(default_factory=dict)
+
+
+@dataclass
+class SampledPathList:
+    count: int = 0
+    paths: list[str] = field(default_factory=list)
+    truncated_count: int = 0
+    sample_limit: int = MAX_FILE_LIST_SAMPLE_SIZE
+
+    def add(self, path: str) -> None:
+        self.count += 1
+        if len(self.paths) < self.sample_limit:
+            self.paths.append(path)
+        else:
+            self.truncated_count += 1
+
+    def as_dict(self) -> dict:
+        return {
+            "count": self.count,
+            "paths": self.paths,
+            "truncated_count": self.truncated_count,
+        }
+
+
+@dataclass
+class FailedFileSamples:
+    items: list[dict[str, str]] = field(default_factory=list)
+    truncated_count: int = 0
+
+    def add(self, path: str, reason: str) -> None:
+        if len(self.items) < MAX_FAILED_FILE_SAMPLE_SIZE:
+            self.items.append({"path": path, "reason": reason})
+        else:
+            self.truncated_count += 1
+
+    def as_dict(self) -> dict:
+        return {
+            "failed_files": self.items,
+            "failed_files_truncated_count": self.truncated_count,
+        }
+
+
 def _library_root(library: Library) -> Path:
     return Path(library.path)
+
+
+def _candidate_ignore_paths(relative_path: str, *, is_dir: bool = False) -> set[str]:
+    normalized_path = relative_path.strip("/")
+    if not normalized_path:
+        return set()
+
+    candidates = {normalized_path, f"/{normalized_path}"}
+    if is_dir:
+        candidates.update({f"{normalized_path}/", f"/{normalized_path}/"})
+    return candidates
+
+
+def _matching_ignore_patterns(relative_path: str, patterns: tuple[str, ...], *, is_dir: bool = False) -> list[str]:
+    candidates = _candidate_ignore_paths(relative_path, is_dir=is_dir)
+    if not candidates:
+        return []
+    return [pattern for pattern in patterns if any(fnmatchcase(candidate, pattern) for candidate in candidates)]
+
+
+def _record_pattern_hits(
+    relative_path: str,
+    matches: list[str],
+    ignored_pattern_hits: dict[str, PatternHit],
+) -> None:
+    for pattern in matches:
+        hit = ignored_pattern_hits.setdefault(pattern, PatternHit())
+        hit.count += 1
+        if len(hit.paths) < MAX_IGNORE_PATTERN_SAMPLE_SIZE:
+            hit.paths.append(relative_path)
+        else:
+            hit.truncated_count += 1
+
+
+def _coerce_trigger_details(trigger_details: dict | None) -> dict:
+    return dict(trigger_details or {})
+
+
+def _append_coalesced_trigger(existing_details: dict, trigger_source: ScanTriggerSource, trigger_details: dict | None) -> dict:
+    details = dict(existing_details or {})
+    coalesced_triggers = list(details.get("coalesced_triggers") or [])
+    truncated_count = int(details.get("coalesced_triggers_truncated_count") or 0)
+    details["coalesced_trigger_count"] = int(details.get("coalesced_trigger_count") or 0) + 1
+
+    entry = {"trigger_source": trigger_source.value, **_coerce_trigger_details(trigger_details)}
+    if len(coalesced_triggers) < 20:
+        coalesced_triggers.append(entry)
+    else:
+        truncated_count += 1
+
+    details["coalesced_triggers"] = coalesced_triggers
+    details["coalesced_triggers_truncated_count"] = truncated_count
+    return details
+
+
+def _short_error_reason(exc: Exception) -> str:
+    message = str(exc).strip()
+    if message:
+        first_line = message.splitlines()[0].strip()
+        if first_line:
+            return first_line[:300]
+    return exc.__class__.__name__
 
 
 def _iter_media_files(
@@ -50,38 +176,46 @@ def _iter_media_files(
     *,
     ignore_patterns: tuple[str, ...] = (),
     should_cancel: Callable[[], bool] | None = None,
-) -> list[Path]:
+) -> DiscoveryResult:
     suffixes = {extension.lower() for extension in allowed_extensions}
     files: list[Path] = []
-
-    def _is_ignored(relative_path: str, *, is_dir: bool = False) -> bool:
-        return matches_ignore_pattern(relative_path, ignore_patterns, is_dir=is_dir)
+    result = DiscoveryResult(files=files)
 
     for current_root, dirnames, filenames in os.walk(root, topdown=True, followlinks=False):
         if should_cancel and should_cancel():
             raise ScanCanceled()
 
         current_root_path = Path(current_root)
-        dirnames[:] = sorted(
-            [
-                dirname
-                for dirname in dirnames
-                if not (current_root_path / dirname).is_symlink()
-                and not _is_ignored((current_root_path / dirname).relative_to(root).as_posix(), is_dir=True)
-            ],
-            key=str.lower,
-        )
+        visible_dirnames: list[str] = []
+        for dirname in dirnames:
+            candidate = current_root_path / dirname
+            if candidate.is_symlink():
+                continue
+            relative_path = candidate.relative_to(root).as_posix()
+            matches = _matching_ignore_patterns(relative_path, ignore_patterns, is_dir=True)
+            if matches:
+                result.ignored_total += 1
+                result.ignored_dir_total += 1
+                _record_pattern_hits(relative_path, matches, result.ignored_pattern_hits)
+                continue
+            visible_dirnames.append(dirname)
+
+        dirnames[:] = sorted(visible_dirnames, key=str.lower)
 
         for filename in sorted(filenames, key=str.lower):
             file_path = current_root_path / filename
             if file_path.is_symlink():
                 continue
             relative_path = file_path.relative_to(root).as_posix()
-            if _is_ignored(relative_path):
+            matches = _matching_ignore_patterns(relative_path, ignore_patterns)
+            if matches:
+                result.ignored_total += 1
+                result.ignored_file_total += 1
+                _record_pattern_hits(relative_path, matches, result.ignored_pattern_hits)
                 continue
             if file_path.suffix.lower() in suffixes:
                 files.append(file_path)
-    return files
+    return result
 
 
 def _replace_analysis(media_file: MediaFile, normalized, external_subtitles: list[dict[str, str | None]]) -> None:
@@ -164,7 +298,42 @@ def _analyze_path(
     return payload, subtitles
 
 
-def queue_scan_job(db: Session, library_id: int, scan_type: str = "incremental") -> tuple[ScanJob, bool]:
+def _empty_scan_summary(ignore_patterns: tuple[str, ...] = ()) -> dict:
+    return {
+        "ignore_patterns": list(ignore_patterns),
+        "discovery": {
+            "discovered_files": 0,
+            "ignored_total": 0,
+            "ignored_dir_total": 0,
+            "ignored_file_total": 0,
+            "ignored_pattern_hits": [],
+        },
+        "changes": {
+            "queued_for_analysis": 0,
+            "unchanged_files": 0,
+            "reanalyzed_incomplete_files": 0,
+            "new_files": {"count": 0, "paths": [], "truncated_count": 0},
+            "modified_files": {"count": 0, "paths": [], "truncated_count": 0},
+            "deleted_files": {"count": 0, "paths": [], "truncated_count": 0},
+        },
+        "analysis": {
+            "queued_for_analysis": 0,
+            "analyzed_successfully": 0,
+            "analysis_failed": 0,
+            "failed_files": [],
+            "failed_files_truncated_count": 0,
+        },
+    }
+
+
+def queue_scan_job(
+    db: Session,
+    library_id: int,
+    scan_type: str = "incremental",
+    *,
+    trigger_source: ScanTriggerSource = ScanTriggerSource.manual,
+    trigger_details: dict | None = None,
+) -> tuple[ScanJob, bool]:
     existing_job = db.scalar(
         select(ScanJob)
         .where(
@@ -175,9 +344,19 @@ def queue_scan_job(db: Session, library_id: int, scan_type: str = "incremental")
         .order_by(ScanJob.id.desc())
     )
     if existing_job is not None:
+        existing_job.trigger_details = _append_coalesced_trigger(existing_job.trigger_details, trigger_source, trigger_details)
+        db.commit()
+        db.refresh(existing_job)
         return existing_job, False
 
-    job = ScanJob(library_id=library_id, status=JobStatus.queued, job_type=scan_type)
+    job = ScanJob(
+        library_id=library_id,
+        status=JobStatus.queued,
+        job_type=scan_type,
+        trigger_source=trigger_source,
+        trigger_details=_coerce_trigger_details(trigger_details),
+        scan_summary=_empty_scan_summary(),
+    )
     db.add(job)
     db.commit()
     db.refresh(job)
@@ -339,8 +518,49 @@ def run_scan(
     }
     incomplete_analysis_ids = _incomplete_analysis_file_ids(db, library_id)
     ignore_patterns = get_ignore_patterns(db, settings)
+    new_files = SampledPathList()
+    modified_files = SampledPathList()
+    deleted_files = SampledPathList()
+    failed_files = FailedFileSamples()
+    unchanged_files = 0
+    reanalyzed_incomplete_files = 0
+    analyzed_successfully = 0
 
-    discovered = _iter_media_files(
+    def _build_scan_summary(discovery: DiscoveryResult, queued_for_analysis: int) -> dict:
+        return {
+            "ignore_patterns": list(ignore_patterns),
+            "discovery": {
+                "discovered_files": len(discovery.files),
+                "ignored_total": discovery.ignored_total,
+                "ignored_dir_total": discovery.ignored_dir_total,
+                "ignored_file_total": discovery.ignored_file_total,
+                "ignored_pattern_hits": [
+                    {
+                        "pattern": pattern,
+                        "count": hit.count,
+                        "paths": hit.paths,
+                        "truncated_count": hit.truncated_count,
+                    }
+                    for pattern, hit in sorted(discovery.ignored_pattern_hits.items(), key=lambda entry: entry[0].lower())
+                ],
+            },
+            "changes": {
+                "queued_for_analysis": queued_for_analysis,
+                "unchanged_files": unchanged_files,
+                "reanalyzed_incomplete_files": reanalyzed_incomplete_files,
+                "new_files": new_files.as_dict(),
+                "modified_files": modified_files.as_dict(),
+                "deleted_files": deleted_files.as_dict(),
+            },
+            "analysis": {
+                "queued_for_analysis": queued_for_analysis,
+                "analyzed_successfully": analyzed_successfully,
+                "analysis_failed": job.errors,
+                **failed_files.as_dict(),
+            },
+        }
+
+    discovery = _iter_media_files(
         root,
         settings.allowed_media_extensions,
         ignore_patterns=ignore_patterns,
@@ -350,7 +570,7 @@ def run_scan(
     to_analyze: list[tuple[MediaFile, Path]] = []
     discovery_counter = 0
 
-    for file_path in discovered:
+    for file_path in discovery.files:
         relative_path = file_path.relative_to(root).as_posix()
         seen_relative_paths.add(relative_path)
         discovery_counter += 1
@@ -359,6 +579,7 @@ def run_scan(
 
         if discovery_counter >= settings.scan_discovery_batch_size:
             job.files_total = len(seen_relative_paths)
+            job.scan_summary = _build_scan_summary(discovery, len(to_analyze))
             db.commit()
             stats_cache.invalidate(cache_key, job.library_id)
             discovery_counter = 0
@@ -378,6 +599,7 @@ def run_scan(
             )
             db.add(media_file)
             db.flush()
+            new_files.add(relative_path)
             to_analyze.append((media_file, file_path))
         else:
             changed = media_file.size_bytes != stat.st_size or media_file.mtime != stat.st_mtime
@@ -388,30 +610,44 @@ def run_scan(
             media_file.mtime = stat.st_mtime
             media_file.last_seen_at = utc_now()
             if changed or scan_type == "full" or analysis_incomplete:
+                if changed:
+                    modified_files.add(relative_path)
+                elif analysis_incomplete:
+                    reanalyzed_incomplete_files += 1
                 media_file.scan_status = ScanStatus.pending
                 to_analyze.append((media_file, file_path))
+            else:
+                unchanged_files += 1
 
     stale_ids = [
         media_file.id
         for relative_path, media_file in existing_by_path.items()
         if relative_path not in seen_relative_paths
     ]
+    for relative_path, media_file in existing_by_path.items():
+        if relative_path not in seen_relative_paths:
+            deleted_files.add(relative_path)
     if stale_ids:
         db.execute(delete(MediaFile).where(MediaFile.id.in_(stale_ids)))
 
-    job.files_total = len(discovered)
+    job.files_total = len(discovery.files)
+    job.scan_summary = _build_scan_summary(discovery, len(to_analyze))
     db.commit()
     stats_cache.invalidate(cache_key, job.library_id)
     if _should_cancel():
         raise ScanCanceled()
 
-    def _safe_analyze(pair: tuple[MediaFile, Path]) -> tuple[MediaFile, dict | None, list[dict[str, str | None]], str | None]:
+    def _safe_analyze(
+        pair: tuple[MediaFile, Path],
+    ) -> tuple[MediaFile, str, dict | None, list[dict[str, str | None]], str | None]:
         media_file, path = pair
+        relative_path = path.relative_to(root).as_posix()
         try:
             payload, subtitles = _analyze_path(path, root, settings, ignore_patterns)
-            return media_file, payload, subtitles, None
-        except Exception:
-            return media_file, None, [], traceback.format_exc()
+            return media_file, relative_path, payload, subtitles, None
+        except Exception as exc:
+            logger.exception("Media analysis failed for %s", relative_path)
+            return media_file, relative_path, None, [], _short_error_reason(exc)
 
     with ThreadPoolExecutor(max_workers=settings.ffprobe_worker_count) as executor:
         batch_counter = 0
@@ -433,7 +669,7 @@ def run_scan(
             done, _ = wait(pending.keys(), return_when=FIRST_COMPLETED)
             for future in done:
                 pending.pop(future)
-                media_file, payload, subtitles, error = future.result()
+                media_file, relative_path, payload, subtitles, error = future.result()
                 if error is None and payload is not None:
                     media_file.scan_status = ScanStatus.analyzing
                     normalized = normalize_ffprobe_payload(payload)
@@ -446,12 +682,15 @@ def run_scan(
                     _persist_quality_breakdown(media_file, breakdown)
                     media_file.last_analyzed_at = utc_now()
                     media_file.scan_status = ScanStatus.ready
+                    analyzed_successfully += 1
                 else:
                     media_file.scan_status = ScanStatus.failed
                     job.errors += 1
+                    failed_files.add(relative_path, error or "Unknown analysis failure")
                 job.files_scanned += 1
                 batch_counter += 1
                 if batch_counter >= settings.scan_commit_batch_size:
+                    job.scan_summary = _build_scan_summary(discovery, len(to_analyze))
                     db.commit()
                     stats_cache.invalidate(cache_key, job.library_id)
                     batch_counter = 0
@@ -462,6 +701,7 @@ def run_scan(
                     next_index += 1
 
         if batch_counter:
+            job.scan_summary = _build_scan_summary(discovery, len(to_analyze))
             db.commit()
             stats_cache.invalidate(cache_key, job.library_id)
 
@@ -470,6 +710,7 @@ def run_scan(
     library.last_scan_at = utc_now()
     job.status = JobStatus.failed if job.errors else JobStatus.completed
     job.finished_at = utc_now()
+    job.scan_summary = _build_scan_summary(discovery, len(to_analyze))
     db.commit()
     stats_cache.invalidate(cache_key, job.library_id)
     db.refresh(job)

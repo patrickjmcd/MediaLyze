@@ -1,5 +1,6 @@
 export type SettingsPanelId =
   | "configuredLibraries"
+  | "recentScanLogs"
   | "libraryStatistics"
   | "createLibrary"
   | "ignorePatterns"
@@ -11,6 +12,7 @@ const STORAGE_KEY = "medialyze-settings-panel-state";
 
 const DEFAULT_STATE: SettingsPanelState = {
   configuredLibraries: true,
+  recentScanLogs: true,
   libraryStatistics: true,
   createLibrary: true,
   ignorePatterns: true,
@@ -27,6 +29,10 @@ function normalizeSettingsPanelState(value: unknown): SettingsPanelState {
       "configuredLibraries" in value && typeof value.configuredLibraries === "boolean"
         ? value.configuredLibraries
         : DEFAULT_STATE.configuredLibraries,
+    recentScanLogs:
+      "recentScanLogs" in value && typeof value.recentScanLogs === "boolean"
+        ? value.recentScanLogs
+        : DEFAULT_STATE.recentScanLogs,
     libraryStatistics:
       "libraryStatistics" in value && typeof value.libraryStatistics === "boolean"
         ? value.libraryStatistics

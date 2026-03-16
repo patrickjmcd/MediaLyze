@@ -64,6 +64,7 @@ def test_init_db_adds_missing_columns_for_existing_sqlite_schema() -> None:
     media_file_columns = {column["name"] for column in inspector.get_columns("media_files")}
     subtitle_columns = {column["name"] for column in inspector.get_columns("subtitle_streams")}
     external_subtitle_columns = {column["name"] for column in inspector.get_columns("external_subtitles")}
+    scan_job_columns = {column["name"] for column in inspector.get_columns("scan_jobs")}
 
     assert "app_settings" in inspector.get_table_names()
     assert {"last_scan_at", "scan_mode", "scan_config"}.issubset(library_columns)
@@ -72,6 +73,7 @@ def test_init_db_adds_missing_columns_for_existing_sqlite_schema() -> None:
     )
     assert {"codec", "language", "default_flag", "forced_flag", "subtitle_type"}.issubset(subtitle_columns)
     assert {"language", "format"}.issubset(external_subtitle_columns)
+    assert {"trigger_source", "trigger_details", "scan_summary"}.issubset(scan_job_columns)
 
 
 def test_init_db_adds_missing_indexes_for_existing_sqlite_schema() -> None:

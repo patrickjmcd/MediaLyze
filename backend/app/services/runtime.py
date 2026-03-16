@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import os
 from pathlib import Path
 from threading import Lock, Timer
 
@@ -11,7 +12,7 @@ from watchdog.observers import Observer
 
 from backend.app.core.config import Settings
 from backend.app.db.session import SessionLocal
-from backend.app.models.entities import JobStatus, Library, ScanJob, ScanMode
+from backend.app.models.entities import JobStatus, Library, ScanJob, ScanMode, ScanTriggerSource
 from backend.app.utils.time import utc_now
 from backend.app.services.scanner import (
     execute_scan_job,
@@ -41,6 +42,7 @@ class ScanRuntimeManager:
         self.lock = Lock()
         self.watch_observers: dict[int, tuple[str, Observer]] = {}
         self.debounce_timers: dict[int, Timer] = {}
+        self.watch_trigger_buffers: dict[int, dict] = {}
         self.active_library_ids: set[int] = set()
         self.submitted_job_ids: set[int] = set()
         self.started = False
@@ -65,6 +67,7 @@ class ScanRuntimeManager:
         for timer in self.debounce_timers.values():
             timer.cancel()
         self.debounce_timers.clear()
+        self.watch_trigger_buffers.clear()
 
         for _library_id, (_path, observer) in list(self.watch_observers.items()):
             observer.stop()
@@ -116,7 +119,14 @@ class ScanRuntimeManager:
         finally:
             db.close()
 
-    def request_scan(self, library_id: int, scan_type: str = "incremental") -> tuple[int, bool]:
+    def request_scan(
+        self,
+        library_id: int,
+        scan_type: str = "incremental",
+        *,
+        trigger_source: ScanTriggerSource = ScanTriggerSource.manual,
+        trigger_details: dict | None = None,
+    ) -> tuple[int, bool]:
         created = False
         should_submit = False
         job_id: int | None = None
@@ -124,7 +134,13 @@ class ScanRuntimeManager:
         with self.lock:
             db = SessionLocal()
             try:
-                job, created = queue_scan_job(db, library_id, scan_type)
+                job, created = queue_scan_job(
+                    db,
+                    library_id,
+                    scan_type,
+                    trigger_source=trigger_source,
+                    trigger_details=trigger_details,
+                )
                 job_id = job.id
                 if created and library_id not in self.active_library_ids and job.id not in self.submitted_job_ids:
                     self.active_library_ids.add(library_id)
@@ -254,14 +270,21 @@ class ScanRuntimeManager:
         try:
             library = db.get(Library, library_id)
             debounce_seconds = int((library.scan_config or {}).get("debounce_seconds", 15)) if library else 15
+            library_path = str(library.path) if library else ""
         finally:
             db.close()
+
+        event_paths = [
+            self._relative_watch_path(path, library_path)
+            for path in paths
+        ]
+        self._record_watch_trigger(library_id, event.event_type, [path for path in event_paths if path], debounce_seconds)
 
         existing = self.debounce_timers.pop(library_id, None)
         if existing:
             existing.cancel()
 
-        timer = Timer(debounce_seconds, lambda: self.request_scan(library_id, "incremental"))
+        timer = Timer(debounce_seconds, lambda: self._request_watch_scan(library_id))
         timer.daemon = True
         self.debounce_timers[library_id] = timer
         timer.start()
@@ -272,7 +295,12 @@ class ScanRuntimeManager:
             self.request_scan,
             trigger="interval",
             minutes=interval_minutes,
-            args=[library.id, "incremental"],
+            kwargs={
+                "library_id": library.id,
+                "scan_type": "incremental",
+                "trigger_source": ScanTriggerSource.scheduled,
+                "trigger_details": {"interval_minutes": interval_minutes},
+            },
             id=self._scheduled_job_id(library.id),
             replace_existing=True,
             max_instances=1,
@@ -379,6 +407,7 @@ class ScanRuntimeManager:
         existing = self.watch_observers.pop(library_id, None)
         if not existing:
             return
+        self.watch_trigger_buffers.pop(library_id, None)
         _path, observer = existing
         observer.stop()
         observer.join(timeout=2)
@@ -386,3 +415,68 @@ class ScanRuntimeManager:
     @staticmethod
     def _scheduled_job_id(library_id: int) -> str:
         return f"library-schedule-{library_id}"
+
+    def _request_watch_scan(self, library_id: int) -> None:
+        with self.lock:
+            details = self.watch_trigger_buffers.pop(
+                library_id,
+                {"debounce_seconds": 15, "event_count": 0, "event_types": [], "paths": []},
+            )
+            self.debounce_timers.pop(library_id, None)
+        self.request_scan(
+            library_id,
+            "incremental",
+            trigger_source=ScanTriggerSource.watchdog,
+            trigger_details=details,
+        )
+
+    def _record_watch_trigger(
+        self,
+        library_id: int,
+        event_type: str,
+        relative_paths: list[str],
+        debounce_seconds: int,
+    ) -> None:
+        with self.lock:
+            buffer = self.watch_trigger_buffers.setdefault(
+                library_id,
+                {
+                    "debounce_seconds": debounce_seconds,
+                    "event_count": 0,
+                    "event_types": [],
+                    "paths": [],
+                    "paths_truncated_count": 0,
+                },
+            )
+            buffer["debounce_seconds"] = debounce_seconds
+            buffer["event_count"] = int(buffer.get("event_count", 0)) + 1
+            event_types = list(buffer.get("event_types") or [])
+            if event_type not in event_types:
+                event_types.append(event_type)
+            buffer["event_types"] = event_types
+
+            current_paths = list(buffer.get("paths") or [])
+            known_paths = set(current_paths)
+            truncated_count = int(buffer.get("paths_truncated_count") or 0)
+            for path in relative_paths:
+                if path in known_paths:
+                    continue
+                known_paths.add(path)
+                if len(current_paths) < 20:
+                    current_paths.append(path)
+                else:
+                    truncated_count += 1
+            buffer["paths"] = current_paths
+            buffer["paths_truncated_count"] = truncated_count
+
+    @staticmethod
+    def _relative_watch_path(path: str, library_path: str) -> str | None:
+        if not library_path:
+            return None
+        try:
+            relative_path = os.path.relpath(path, library_path)
+        except ValueError:
+            return None
+        if relative_path.startswith(".."):
+            return None
+        return Path(relative_path).as_posix()
