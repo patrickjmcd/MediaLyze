@@ -354,6 +354,6 @@ describe("LibrariesPage settings panels", () => {
     fireEvent.click(screen.getAllByText("Ignore patterns")[1]);
     expect((await screen.findAllByText("sample.*")).length).toBeGreaterThanOrEqual(2);
     fireEvent.click(screen.getByText("Files that could not be analyzed"));
-    expect(await screen.findByText("broken.mkv")).toBeInTheDocument();
+    expect((await screen.findAllByText("broken.mkv")).length).toBeGreaterThanOrEqual(2);
   });
 });

@@ -797,12 +797,14 @@ export function LibrariesPage() {
     count: number,
     paths: string[],
     truncatedCount = 0,
+    summary = "",
   ) {
     return (
       <details className="scan-log-detail-block scan-log-collapsible-block">
         <summary className="scan-log-collapse-toggle">
           <span className="scan-log-collapse-copy">
             <strong>{title}</strong>
+            {summary ? <span className="scan-log-collapse-summary">{summary}</span> : null}
           </span>
           <span className="scan-log-collapse-meta">
             <span className="badge">{count}</span>
@@ -839,83 +841,13 @@ export function LibrariesPage() {
       return null;
     }
 
-    const triggerDetails = detail.trigger_details;
-    const coalescedTriggers = Array.isArray(triggerDetails.coalesced_triggers) ? triggerDetails.coalesced_triggers : [];
-    const watchdogPaths = Array.isArray(triggerDetails.paths)
-      ? triggerDetails.paths.filter((value): value is string => typeof value === "string")
-      : [];
     const patternHits = detail.scan_summary.discovery.ignored_pattern_hits;
     const ignorePatternsSummary = compactScanValues(detail.scan_summary.ignore_patterns);
     const patternHitsSummary = compactScanValues(patternHits.map((hit) => hit.pattern));
+    const failedFilesSummary = compactScanValues(detail.scan_summary.analysis.failed_files.map((entry) => entry.path));
 
     return (
       <div className="scan-log-detail">
-        <details className="scan-log-detail-block scan-log-collapsible-block">
-          <summary className="scan-log-collapse-toggle">
-            <span className="scan-log-collapse-copy">
-              <strong>{t("scanLogs.triggerReason")}</strong>
-              <span className="scan-log-collapse-summary">{formatTriggerSource(t, detail.trigger_source)}</span>
-            </span>
-            <span className="scan-log-collapse-meta">
-              {job.trigger_source === "watchdog" && typeof triggerDetails.event_count === "number" ? (
-                <span className="badge">{triggerDetails.event_count}</span>
-              ) : null}
-              <ChevronRight aria-hidden="true" className="nav-icon scan-log-collapse-icon" />
-            </span>
-          </summary>
-          <div className="scan-log-collapse-content">
-            <div className="scan-log-trigger-copy">{summarizeTriggerDetails(t, detail)}</div>
-            {job.trigger_source === "scheduled" && typeof triggerDetails.interval_minutes === "number" ? (
-              <div className="subtitle">{t("scanLogs.intervalMinutes", { minutes: triggerDetails.interval_minutes })}</div>
-            ) : null}
-            {job.trigger_source === "watchdog" && typeof triggerDetails.event_count === "number" ? (
-              <div className="subtitle">{t("scanLogs.watchEvents", { count: triggerDetails.event_count })}</div>
-            ) : null}
-            {watchdogPaths.length > 0 ? (
-              <div className="scan-log-scroll-area">
-                <div className="scan-log-path-list">
-                  {watchdogPaths.map((path) => (
-                    <code key={`trigger-${detail.id}-${path}`} className="scan-log-path">
-                      {path}
-                    </code>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-            {coalescedTriggers.length > 0 ? (
-              <div className="subtitle">{t("scanLogs.coalescedTriggers", { count: coalescedTriggers.length })}</div>
-            ) : null}
-          </div>
-        </details>
-
-        <details className="scan-log-detail-block scan-log-collapsible-block">
-          <summary className="scan-log-collapse-toggle">
-            <span className="scan-log-collapse-copy">
-              <strong>{t("scanLogs.ignorePatterns")}</strong>
-              {ignorePatternsSummary ? <span className="scan-log-collapse-summary">{ignorePatternsSummary}</span> : null}
-            </span>
-            <span className="scan-log-collapse-meta">
-              <span className="badge">{detail.scan_summary.ignore_patterns.length}</span>
-              <ChevronRight aria-hidden="true" className="nav-icon scan-log-collapse-icon" />
-            </span>
-          </summary>
-          <div className="scan-log-collapse-content">
-            {detail.scan_summary.ignore_patterns.length > 0 ? (
-              <div className="scan-log-scroll-area">
-                <div className="scan-log-path-list">
-                  {detail.scan_summary.ignore_patterns.map((pattern) => (
-                    <code key={`pattern-${detail.id}-${pattern}`} className="scan-log-path">
-                      {pattern}
-                    </code>
-                  ))}
-                </div>
-              </div>
-            ) : (
-              <div className="notice scan-log-empty-detail">{t("scanLogs.none")}</div>
-            )}
-          </div>
-        </details>
-
         <div className="scan-log-summary-meta scan-log-summary-meta-detail">
           <span>{t("scanLogs.startedAt")}: {formatDate(detail.started_at)}</span>
           <span>{t("scanLogs.finishedAt")}: {formatDate(detail.finished_at)}</span>
@@ -941,7 +873,35 @@ export function LibrariesPage() {
           </div>
         </div>
 
-        {patternHits.length > 0 ? (
+        <div className="scan-log-panels-grid">
+          <details className="scan-log-detail-block scan-log-collapsible-block">
+            <summary className="scan-log-collapse-toggle">
+              <span className="scan-log-collapse-copy">
+                <strong>{t("scanLogs.ignorePatterns")}</strong>
+                {ignorePatternsSummary ? <span className="scan-log-collapse-summary">{ignorePatternsSummary}</span> : null}
+              </span>
+              <span className="scan-log-collapse-meta">
+                <span className="badge">{detail.scan_summary.ignore_patterns.length}</span>
+                <ChevronRight aria-hidden="true" className="nav-icon scan-log-collapse-icon" />
+              </span>
+            </summary>
+            <div className="scan-log-collapse-content">
+              {detail.scan_summary.ignore_patterns.length > 0 ? (
+                <div className="scan-log-scroll-area">
+                  <div className="scan-log-path-list">
+                    {detail.scan_summary.ignore_patterns.map((pattern) => (
+                      <code key={`pattern-${detail.id}-${pattern}`} className="scan-log-path">
+                        {pattern}
+                      </code>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="notice scan-log-empty-detail">{t("scanLogs.none")}</div>
+              )}
+            </div>
+          </details>
+
           <details className="scan-log-detail-block scan-log-collapsible-block">
             <summary className="scan-log-collapse-toggle">
               <span className="scan-log-collapse-copy">
@@ -952,89 +912,95 @@ export function LibrariesPage() {
                 <span className="badge">{patternHits.length}</span>
                 <ChevronRight aria-hidden="true" className="nav-icon scan-log-collapse-icon" />
               </span>
-          </summary>
-          <div className="scan-log-collapse-content">
-              <div className="scan-log-scroll-area">
-                <div className="scan-log-pattern-list">
-                  {patternHits.map((hit) => (
-                    <div className="scan-log-pattern-card" key={`${detail.id}-${hit.pattern}`}>
-                      <div className="scan-log-detail-title">
-                        <code>{hit.pattern}</code>
-                        <span className="badge">{hit.count}</span>
-                      </div>
-                      {hit.paths.length > 0 ? (
-                        <div className="scan-log-path-list">
-                          {hit.paths.map((path) => (
-                            <code key={`${hit.pattern}-${path}`} className="scan-log-path">
-                              {path}
-                            </code>
-                          ))}
+            </summary>
+            <div className="scan-log-collapse-content">
+              {patternHits.length > 0 ? (
+                <div className="scan-log-scroll-area">
+                  <div className="scan-log-pattern-list">
+                    {patternHits.map((hit) => (
+                      <div className="scan-log-pattern-card" key={`${detail.id}-${hit.pattern}`}>
+                        <div className="scan-log-detail-title">
+                          <code>{hit.pattern}</code>
+                          <span className="badge">{hit.count}</span>
                         </div>
-                      ) : null}
-                      {hit.truncated_count > 0 ? (
-                        <div className="subtitle">{t("scanLogs.moreEntries", { count: hit.truncated_count })}</div>
-                      ) : null}
-                    </div>
-                  ))}
+                        {hit.paths.length > 0 ? (
+                          <div className="scan-log-path-list">
+                            {hit.paths.map((path) => (
+                              <code key={`${hit.pattern}-${path}`} className="scan-log-path">
+                                {path}
+                              </code>
+                            ))}
+                          </div>
+                        ) : null}
+                        {hit.truncated_count > 0 ? (
+                          <div className="subtitle">{t("scanLogs.moreEntries", { count: hit.truncated_count })}</div>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div className="notice scan-log-empty-detail">{t("scanLogs.none")}</div>
+              )}
             </div>
           </details>
-        ) : null}
 
-        <div className="scan-log-detail-grid">
           {renderScanPathList(
             t("scanLogs.newFiles"),
             detail.scan_summary.changes.new_files.count,
             detail.scan_summary.changes.new_files.paths,
             detail.scan_summary.changes.new_files.truncated_count,
+            compactScanValues(detail.scan_summary.changes.new_files.paths),
           )}
           {renderScanPathList(
             t("scanLogs.changedFiles"),
             detail.scan_summary.changes.modified_files.count,
             detail.scan_summary.changes.modified_files.paths,
             detail.scan_summary.changes.modified_files.truncated_count,
+            compactScanValues(detail.scan_summary.changes.modified_files.paths),
           )}
           {renderScanPathList(
             t("scanLogs.deletedFiles"),
             detail.scan_summary.changes.deleted_files.count,
             detail.scan_summary.changes.deleted_files.paths,
             detail.scan_summary.changes.deleted_files.truncated_count,
+            compactScanValues(detail.scan_summary.changes.deleted_files.paths),
           )}
-        </div>
 
-        <details className="scan-log-detail-block scan-log-collapsible-block">
-          <summary className="scan-log-collapse-toggle">
-            <span className="scan-log-collapse-copy">
-              <strong>{t("scanLogs.failedFiles")}</strong>
-            </span>
-            <span className="scan-log-collapse-meta">
-              <span className="badge">{detail.scan_summary.analysis.analysis_failed}</span>
-              <ChevronRight aria-hidden="true" className="nav-icon scan-log-collapse-icon" />
-            </span>
-          </summary>
-          <div className="scan-log-collapse-content">
-            {detail.scan_summary.analysis.failed_files.length > 0 ? (
-              <div className="scan-log-scroll-area">
-                <div className="scan-log-issue-list">
-                  {detail.scan_summary.analysis.failed_files.map((entry) => (
-                    <div className="scan-log-issue" key={`${detail.id}-${entry.path}`}>
-                      <code className="scan-log-path">{entry.path}</code>
-                      <span>{entry.reason}</span>
-                    </div>
-                  ))}
+          <details className="scan-log-detail-block scan-log-collapsible-block">
+            <summary className="scan-log-collapse-toggle">
+              <span className="scan-log-collapse-copy">
+                <strong>{t("scanLogs.failedFiles")}</strong>
+                {failedFilesSummary ? <span className="scan-log-collapse-summary">{failedFilesSummary}</span> : null}
+              </span>
+              <span className="scan-log-collapse-meta">
+                <span className="badge">{detail.scan_summary.analysis.analysis_failed}</span>
+                <ChevronRight aria-hidden="true" className="nav-icon scan-log-collapse-icon" />
+              </span>
+            </summary>
+            <div className="scan-log-collapse-content">
+              {detail.scan_summary.analysis.failed_files.length > 0 ? (
+                <div className="scan-log-scroll-area">
+                  <div className="scan-log-issue-list">
+                    {detail.scan_summary.analysis.failed_files.map((entry) => (
+                      <div className="scan-log-issue" key={`${detail.id}-${entry.path}`}>
+                        <code className="scan-log-path">{entry.path}</code>
+                        <span>{entry.reason}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            ) : (
-              <div className="notice scan-log-empty-detail">{t("scanLogs.none")}</div>
-            )}
-            {detail.scan_summary.analysis.failed_files_truncated_count > 0 ? (
-              <div className="subtitle">
-                {t("scanLogs.moreEntries", { count: detail.scan_summary.analysis.failed_files_truncated_count })}
-              </div>
-            ) : null}
-          </div>
-        </details>
+              ) : (
+                <div className="notice scan-log-empty-detail">{t("scanLogs.none")}</div>
+              )}
+              {detail.scan_summary.analysis.failed_files_truncated_count > 0 ? (
+                <div className="subtitle">
+                  {t("scanLogs.moreEntries", { count: detail.scan_summary.analysis.failed_files_truncated_count })}
+                </div>
+              ) : null}
+            </div>
+          </details>
+        </div>
       </div>
     );
   }

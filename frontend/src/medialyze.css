@@ -803,7 +803,14 @@
 .scan-log-summary-grid {
   display: grid;
   gap: 12px;
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.scan-log-panels-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  align-items: start;
 }
 
 .scan-log-stat {
@@ -869,9 +876,10 @@
 }
 
 .scan-log-scroll-area {
-  max-height: 230px;
+  max-height: 13rem;
   overflow: auto;
   padding-right: 4px;
+  scrollbar-gutter: stable;
 }
 
 .scan-log-summary-meta-detail {
@@ -1832,8 +1840,18 @@
     grid-template-columns: 1fr;
   }
 
+  .scan-log-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .file-detail-title {
     -webkit-line-clamp: 3;
+  }
+}
+
+@media (max-width: 560px) {
+  .scan-log-summary-grid {
+    grid-template-columns: 1fr;
   }
 }
 
