@@ -11,3 +11,5 @@ services:
     volumes:
       - ${CONFIG_HOST_DIR:-./config}:/config
       - ${MEDIA_HOST_DIR:-./media}:/media:ro
+      # additional media mounts, if needed. Extend this pattern if needed:
+      # /PATH/TO/MEDIA1:/media/MEDIA1:ro
