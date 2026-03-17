@@ -10,6 +10,35 @@ All notable changes to this project will be documented in this file.
 
 ### 🐛 Bug fixes
 
+## v0.2.1
+
+>2026-03-17
+
+### ✨ New
+
+- Expanded HDR10+ detection so more `ffprobe` metadata variants are recognized during analysis
+- Refreshed the README with current screenshots, project status updates, and a star-history chart
+
+### 🐛 Bug fixes
+
+- Improved the scan-log failures UI so failed files stay readable and show their analysis error on demand
+- Hid container placeholder directories like `cdrom`, `floppy`, and `usb` in the path browser while keeping explicit mounted media paths visible
+
+## v0.2.0
+
+>2026-03-16
+
+### ✨ New
+
+- Added detailed **scan logs** with recent-job history with rich details
+- Collapsible settings panels
+
+### 🐛 Bug fixes
+
+- Hid nested mount points and symlinks outside `MEDIA_ROOT` in the path browser so multi-directory Docker setups no longer expose invalid library targets
+- Fixed visual-density scoring to accept both `,` and `.` decimals, support an explicit maximum threshold, and use actual file size to penalize bloated media even when bitrate metadata is misleading
+- Fixed incremental scans to reanalyze files with incomplete metadata, remove files that became ignored or disappeared, and preserve short actionable ffprobe failure reasons in stored scan summaries
+
 ## v0.1.3
 
 >2026-03-15
