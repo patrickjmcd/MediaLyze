@@ -333,7 +333,7 @@ describe("LibraryDetailPage", () => {
     expect(scrollIntoViewMock).toHaveBeenCalled();
   });
 
-  it("adds multiple statistic values in the same field with AND semantics", async () => {
+  it("replaces existing statistic values in the same field", async () => {
     const libraryId = 411;
     vi.spyOn(api, "appSettings").mockResolvedValue({
       ignore_patterns: [],
@@ -369,12 +369,12 @@ describe("LibraryDetailPage", () => {
         String(libraryId),
         expect.objectContaining({
           filters: expect.objectContaining({
-            audio_codecs: "aac dts",
+            audio_codecs: "dts",
           }),
         }),
       ),
     );
-    expect(screen.getByPlaceholderText("e.g. dts aac")).toHaveValue("aac dts");
+    expect(screen.getByPlaceholderText("e.g. dts aac")).toHaveValue("dts");
   });
 
   it("disables already-applied statistic values without duplicating the filter", async () => {
@@ -404,6 +404,46 @@ describe("LibraryDetailPage", () => {
     const requestCount = libraryFilesSpy.mock.calls.length;
     fireEvent.click(appliedButton);
     await waitFor(() => expect(libraryFilesSpy.mock.calls.length).toBe(requestCount));
+  });
+
+  it("keeps statistic filters from different categories combined", async () => {
+    const libraryId = 413;
+    vi.spyOn(api, "appSettings").mockResolvedValue({
+      ignore_patterns: [],
+      user_ignore_patterns: [],
+      default_ignore_patterns: [],
+      feature_flags: { show_dolby_vision_profiles: false, show_analyzed_files_csv_export: true },
+    });
+    vi.spyOn(api, "librarySummary").mockResolvedValue(createLibrarySummary(libraryId));
+    vi.spyOn(
+      api,
+      "libraryStatistics",
+    ).mockResolvedValue(
+      createLibraryStatistics({
+        resolution_distribution: [{ label: "1920x1080", value: 2 }],
+        hdr_distribution: [{ label: "HDR10", value: 1 }],
+      }),
+    );
+    const libraryFilesSpy = vi.spyOn(api, "libraryFiles").mockResolvedValue(createFilesPage(libraryId));
+
+    renderPage(libraryId);
+
+    expect(await screen.findByText("2 of 2 entries rendered")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /filter analyzed files by resolution: 1920x1080/i }));
+    fireEvent.click(screen.getByRole("button", { name: /filter analyzed files by dynamic range: hdr10/i }));
+
+    await waitFor(() =>
+      expect(libraryFilesSpy).toHaveBeenLastCalledWith(
+        String(libraryId),
+        expect.objectContaining({
+          filters: expect.objectContaining({
+            resolution: "1920x1080",
+            hdr_type: "HDR10",
+          }),
+        }),
+      ),
+    );
   });
 
   it("combines file/path and metadata filters in the same request", async () => {

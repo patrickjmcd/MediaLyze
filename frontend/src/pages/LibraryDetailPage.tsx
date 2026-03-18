@@ -436,15 +436,6 @@ function hasSearchValueTokens(existingValue: string | undefined, candidateValue:
   return candidateTokens.length > 0 && candidateTokens.every((token) => existingTokens.has(token));
 }
 
-function appendSearchValue(existingValue: string | undefined, candidateValue: string): string {
-  const normalizedExisting = existingValue?.trim() ?? "";
-  const normalizedCandidate = candidateValue.trim();
-  if (!normalizedCandidate || hasSearchValueTokens(normalizedExisting, normalizedCandidate)) {
-    return normalizedExisting;
-  }
-  return normalizedExisting ? `${normalizedExisting} ${normalizedCandidate}` : normalizedCandidate;
-}
-
 function buildCsvFallbackFilename(libraryName: string): string {
   const safeLibraryName = libraryName.replace(/[^A-Za-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "Library";
   const timestamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
@@ -638,11 +629,10 @@ export function LibraryDetailPage() {
     startTransition(() => {
       setSelectedMetadataFields((current) => (current.includes(field) ? current : [...current, field]));
       setFieldValues((current) => {
-        const nextValue = appendSearchValue(current[field], normalizedValue);
-        if (nextValue === (current[field]?.trim() ?? "")) {
+        if ((current[field]?.trim() ?? "") === normalizedValue) {
           return current;
         }
-        return { ...current, [field]: nextValue };
+        return { ...current, [field]: normalizedValue };
       });
     });
 
