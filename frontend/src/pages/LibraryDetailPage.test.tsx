@@ -16,6 +16,14 @@ import {
 import { ScanJobsProvider } from "../lib/scan-jobs";
 import { LibraryDetailPage } from "./LibraryDetailPage";
 
+const scrollIntoViewMock = vi.fn();
+
+Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+  configurable: true,
+  writable: true,
+  value: scrollIntoViewMock,
+});
+
 function createLibrarySummary(id: number): LibrarySummary {
   return {
     id,
@@ -36,7 +44,7 @@ function createLibrarySummary(id: number): LibrarySummary {
   };
 }
 
-function createLibraryStatistics(): LibraryStatistics {
+function createLibraryStatistics(overrides: Partial<LibraryStatistics> = {}): LibraryStatistics {
   return {
     video_codec_distribution: [{ label: "h264", value: 2 }],
     resolution_distribution: [{ label: "1920x1080", value: 2 }],
@@ -46,6 +54,7 @@ function createLibraryStatistics(): LibraryStatistics {
     subtitle_language_distribution: [{ label: "en", value: 2 }],
     subtitle_codec_distribution: [{ label: "srt", value: 2 }],
     subtitle_source_distribution: [{ label: "external", value: 2 }],
+    ...overrides,
   };
 }
 
@@ -126,6 +135,7 @@ function renderPage(libraryId: number, { strictMode = false }: { strictMode?: bo
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  scrollIntoViewMock.mockClear();
   window.localStorage.clear();
 });
 
@@ -136,7 +146,7 @@ describe("LibraryDetailPage", () => {
       ignore_patterns: [],
       user_ignore_patterns: [],
       default_ignore_patterns: [],
-      feature_flags: { show_dolby_vision_profiles: false },
+      feature_flags: { show_dolby_vision_profiles: false, show_analyzed_files_csv_export: true },
     });
     const librarySummarySpy = vi.spyOn(api, "librarySummary").mockResolvedValue(createLibrarySummary(libraryId));
     const libraryStatisticsSpy = vi.spyOn(api, "libraryStatistics").mockResolvedValue(createLibraryStatistics());
@@ -156,7 +166,7 @@ describe("LibraryDetailPage", () => {
       ignore_patterns: [],
       user_ignore_patterns: [],
       default_ignore_patterns: [],
-      feature_flags: { show_dolby_vision_profiles: false },
+      feature_flags: { show_dolby_vision_profiles: false, show_analyzed_files_csv_export: true },
     });
     const librarySummarySpy = vi.spyOn(api, "librarySummary").mockResolvedValue(createLibrarySummary(libraryId));
     const libraryStatisticsSpy = vi.spyOn(api, "libraryStatistics").mockResolvedValue(createLibraryStatistics());
@@ -178,7 +188,7 @@ describe("LibraryDetailPage", () => {
       ignore_patterns: [],
       user_ignore_patterns: [],
       default_ignore_patterns: [],
-      feature_flags: { show_dolby_vision_profiles: false },
+      feature_flags: { show_dolby_vision_profiles: false, show_analyzed_files_csv_export: true },
     });
     vi.spyOn(api, "librarySummary").mockResolvedValue(createLibrarySummary(libraryId));
     vi.spyOn(api, "libraryStatistics").mockResolvedValue(createLibraryStatistics());
@@ -208,7 +218,7 @@ describe("LibraryDetailPage", () => {
       ignore_patterns: [],
       user_ignore_patterns: [],
       default_ignore_patterns: [],
-      feature_flags: { show_dolby_vision_profiles: false },
+      feature_flags: { show_dolby_vision_profiles: false, show_analyzed_files_csv_export: true },
     });
     vi.spyOn(api, "librarySummary").mockResolvedValue(createLibrarySummary(libraryId));
     vi.spyOn(api, "libraryStatistics").mockRejectedValue(new Error("statistics unavailable"));
@@ -226,7 +236,7 @@ describe("LibraryDetailPage", () => {
       ignore_patterns: [],
       user_ignore_patterns: [],
       default_ignore_patterns: [],
-      feature_flags: { show_dolby_vision_profiles: false },
+      feature_flags: { show_dolby_vision_profiles: false, show_analyzed_files_csv_export: true },
     });
     const librarySummarySpy = vi.spyOn(api, "librarySummary").mockResolvedValue(createLibrarySummary(libraryId));
     const libraryStatisticsSpy = vi.spyOn(api, "libraryStatistics").mockResolvedValue(createLibraryStatistics());
@@ -237,7 +247,7 @@ describe("LibraryDetailPage", () => {
     expect(await screen.findByText("2 of 2 entries rendered")).toBeInTheDocument();
     const initialFileCalls = libraryFilesSpy.mock.calls.length;
 
-    fireEvent.click(screen.getByRole("button", { name: /codec/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^codec$/i }));
 
     await waitFor(() => expect(libraryFilesSpy.mock.calls.length).toBeGreaterThan(initialFileCalls));
     expect(librarySummarySpy).toHaveBeenCalled();
@@ -250,7 +260,7 @@ describe("LibraryDetailPage", () => {
       ignore_patterns: [],
       user_ignore_patterns: [],
       default_ignore_patterns: [],
-      feature_flags: { show_dolby_vision_profiles: false },
+      feature_flags: { show_dolby_vision_profiles: false, show_analyzed_files_csv_export: true },
     });
     vi.spyOn(api, "librarySummary").mockResolvedValue(createLibrarySummary(libraryId));
     vi.spyOn(api, "libraryStatistics").mockResolvedValue(createLibraryStatistics());
@@ -261,7 +271,9 @@ describe("LibraryDetailPage", () => {
     expect(await screen.findByText("2 of 2 entries rendered")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /add metadata search field/i }));
+    expect(screen.getByRole("menu")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("menuitemcheckbox", { name: /video codec/i }));
+    await waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
 
     const codecInput = await screen.findByPlaceholderText("e.g. hevc av1");
     fireEvent.change(codecInput, { target: { value: "hevc" } });
@@ -289,13 +301,158 @@ describe("LibraryDetailPage", () => {
     );
   });
 
+  it("filters files when clicking a statistic count", async () => {
+    const libraryId = 410;
+    vi.spyOn(api, "appSettings").mockResolvedValue({
+      ignore_patterns: [],
+      user_ignore_patterns: [],
+      default_ignore_patterns: [],
+      feature_flags: { show_dolby_vision_profiles: false, show_analyzed_files_csv_export: true },
+    });
+    vi.spyOn(api, "librarySummary").mockResolvedValue(createLibrarySummary(libraryId));
+    vi.spyOn(api, "libraryStatistics").mockResolvedValue(createLibraryStatistics());
+    const libraryFilesSpy = vi.spyOn(api, "libraryFiles").mockResolvedValue(createFilesPage(libraryId));
+
+    renderPage(libraryId);
+
+    expect(await screen.findByText("2 of 2 entries rendered")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /filter analyzed files by video codec: h\.264 \/ avc/i }));
+
+    expect(await screen.findByPlaceholderText("e.g. hevc av1")).toHaveValue("h264");
+    await waitFor(() =>
+      expect(libraryFilesSpy).toHaveBeenLastCalledWith(
+        String(libraryId),
+        expect.objectContaining({
+          filters: expect.objectContaining({
+            video_codec: "h264",
+          }),
+        }),
+      ),
+    );
+    expect(scrollIntoViewMock).toHaveBeenCalled();
+  });
+
+  it("replaces existing statistic values in the same field", async () => {
+    const libraryId = 411;
+    vi.spyOn(api, "appSettings").mockResolvedValue({
+      ignore_patterns: [],
+      user_ignore_patterns: [],
+      default_ignore_patterns: [],
+      feature_flags: { show_dolby_vision_profiles: false, show_analyzed_files_csv_export: true },
+    });
+    vi.spyOn(api, "librarySummary").mockResolvedValue(createLibrarySummary(libraryId));
+    vi.spyOn(
+      api,
+      "libraryStatistics",
+    ).mockResolvedValue(
+      createLibraryStatistics({
+        audio_codec_distribution: [
+          { label: "aac", value: 2 },
+          { label: "dts", value: 1 },
+        ],
+      }),
+    );
+    const libraryFilesSpy = vi.spyOn(api, "libraryFiles").mockResolvedValue(createFilesPage(libraryId));
+
+    renderPage(libraryId);
+
+    expect(await screen.findByText("2 of 2 entries rendered")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /filter analyzed files by audio codecs: aac/i }));
+    expect(await screen.findByPlaceholderText("e.g. dts aac")).toHaveValue("aac");
+
+    fireEvent.click(screen.getByRole("button", { name: /filter analyzed files by audio codecs: dts/i }));
+
+    await waitFor(() =>
+      expect(libraryFilesSpy).toHaveBeenLastCalledWith(
+        String(libraryId),
+        expect.objectContaining({
+          filters: expect.objectContaining({
+            audio_codecs: "dts",
+          }),
+        }),
+      ),
+    );
+    expect(screen.getByPlaceholderText("e.g. dts aac")).toHaveValue("dts");
+  });
+
+  it("disables already-applied statistic values without duplicating the filter", async () => {
+    const libraryId = 412;
+    vi.spyOn(api, "appSettings").mockResolvedValue({
+      ignore_patterns: [],
+      user_ignore_patterns: [],
+      default_ignore_patterns: [],
+      feature_flags: { show_dolby_vision_profiles: false, show_analyzed_files_csv_export: true },
+    });
+    vi.spyOn(api, "librarySummary").mockResolvedValue(createLibrarySummary(libraryId));
+    vi.spyOn(api, "libraryStatistics").mockResolvedValue(createLibraryStatistics());
+    const libraryFilesSpy = vi.spyOn(api, "libraryFiles").mockResolvedValue(createFilesPage(libraryId));
+
+    renderPage(libraryId);
+
+    expect(await screen.findByText("2 of 2 entries rendered")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /filter analyzed files by video codec: h\.264 \/ avc/i }));
+
+    const appliedButton = await screen.findByRole("button", {
+      name: /already added to analyzed files filter for video codec: h\.264 \/ avc/i,
+    });
+    expect(appliedButton).toBeDisabled();
+    expect(await screen.findByPlaceholderText("e.g. hevc av1")).toHaveValue("h264");
+
+    const requestCount = libraryFilesSpy.mock.calls.length;
+    fireEvent.click(appliedButton);
+    await waitFor(() => expect(libraryFilesSpy.mock.calls.length).toBe(requestCount));
+  });
+
+  it("keeps statistic filters from different categories combined", async () => {
+    const libraryId = 413;
+    vi.spyOn(api, "appSettings").mockResolvedValue({
+      ignore_patterns: [],
+      user_ignore_patterns: [],
+      default_ignore_patterns: [],
+      feature_flags: { show_dolby_vision_profiles: false, show_analyzed_files_csv_export: true },
+    });
+    vi.spyOn(api, "librarySummary").mockResolvedValue(createLibrarySummary(libraryId));
+    vi.spyOn(
+      api,
+      "libraryStatistics",
+    ).mockResolvedValue(
+      createLibraryStatistics({
+        resolution_distribution: [{ label: "1920x1080", value: 2 }],
+        hdr_distribution: [{ label: "HDR10", value: 1 }],
+      }),
+    );
+    const libraryFilesSpy = vi.spyOn(api, "libraryFiles").mockResolvedValue(createFilesPage(libraryId));
+
+    renderPage(libraryId);
+
+    expect(await screen.findByText("2 of 2 entries rendered")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /filter analyzed files by resolution: 1920x1080/i }));
+    fireEvent.click(screen.getByRole("button", { name: /filter analyzed files by dynamic range: hdr10/i }));
+
+    await waitFor(() =>
+      expect(libraryFilesSpy).toHaveBeenLastCalledWith(
+        String(libraryId),
+        expect.objectContaining({
+          filters: expect.objectContaining({
+            resolution: "1920x1080",
+            hdr_type: "HDR10",
+          }),
+        }),
+      ),
+    );
+  });
+
   it("combines file/path and metadata filters in the same request", async () => {
     const libraryId = 505;
     vi.spyOn(api, "appSettings").mockResolvedValue({
       ignore_patterns: [],
       user_ignore_patterns: [],
       default_ignore_patterns: [],
-      feature_flags: { show_dolby_vision_profiles: false },
+      feature_flags: { show_dolby_vision_profiles: false, show_analyzed_files_csv_export: true },
     });
     vi.spyOn(api, "librarySummary").mockResolvedValue(createLibrarySummary(libraryId));
     vi.spyOn(api, "libraryStatistics").mockResolvedValue(createLibraryStatistics());
@@ -323,13 +480,85 @@ describe("LibraryDetailPage", () => {
     );
   });
 
+  it("applies subtitle source filters from statistic counts", async () => {
+    const libraryId = 506;
+    vi.spyOn(api, "appSettings").mockResolvedValue({
+      ignore_patterns: [],
+      user_ignore_patterns: [],
+      default_ignore_patterns: [],
+      feature_flags: { show_dolby_vision_profiles: false, show_analyzed_files_csv_export: true },
+    });
+    vi.spyOn(api, "librarySummary").mockResolvedValue(createLibrarySummary(libraryId));
+    vi.spyOn(api, "libraryStatistics").mockResolvedValue(createLibraryStatistics());
+    const libraryFilesSpy = vi.spyOn(api, "libraryFiles").mockResolvedValue(createFilesPage(libraryId));
+
+    renderPage(libraryId);
+
+    expect(await screen.findByText("2 of 2 entries rendered")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /filter analyzed files by subtitle sources: external/i }));
+
+    expect(await screen.findByPlaceholderText("e.g. internal external")).toHaveValue("external");
+    await waitFor(() =>
+      expect(libraryFilesSpy).toHaveBeenLastCalledWith(
+        String(libraryId),
+        expect.objectContaining({
+          filters: expect.objectContaining({
+            subtitle_sources: "external",
+          }),
+        }),
+      ),
+    );
+  });
+
+  it("uses collapsed hdr labels as the filter value", async () => {
+    const libraryId = 507;
+    vi.spyOn(api, "appSettings").mockResolvedValue({
+      ignore_patterns: [],
+      user_ignore_patterns: [],
+      default_ignore_patterns: [],
+      feature_flags: { show_dolby_vision_profiles: false, show_analyzed_files_csv_export: true },
+    });
+    vi.spyOn(api, "librarySummary").mockResolvedValue(createLibrarySummary(libraryId));
+    vi.spyOn(
+      api,
+      "libraryStatistics",
+    ).mockResolvedValue(
+      createLibraryStatistics({
+        hdr_distribution: [
+          { label: "Dolby Vision 8.1", value: 1 },
+          { label: "Dolby Vision 7", value: 1 },
+        ],
+      }),
+    );
+    const libraryFilesSpy = vi.spyOn(api, "libraryFiles").mockResolvedValue(createFilesPage(libraryId));
+
+    renderPage(libraryId);
+
+    expect(await screen.findByText("2 of 2 entries rendered")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /filter analyzed files by dynamic range: dolby vision/i }));
+
+    expect(await screen.findByPlaceholderText("e.g. hdr10, dv, sdr")).toHaveValue("Dolby Vision");
+    await waitFor(() =>
+      expect(libraryFilesSpy).toHaveBeenLastCalledWith(
+        String(libraryId),
+        expect.objectContaining({
+          filters: expect.objectContaining({
+            hdr_type: "Dolby Vision",
+          }),
+        }),
+      ),
+    );
+  });
+
   it("blocks invalid structured search values and shows an inline validation error", async () => {
     const libraryId = 606;
     vi.spyOn(api, "appSettings").mockResolvedValue({
       ignore_patterns: [],
       user_ignore_patterns: [],
       default_ignore_patterns: [],
-      feature_flags: { show_dolby_vision_profiles: false },
+      feature_flags: { show_dolby_vision_profiles: false, show_analyzed_files_csv_export: true },
     });
     vi.spyOn(api, "librarySummary").mockResolvedValue(createLibrarySummary(libraryId));
     vi.spyOn(api, "libraryStatistics").mockResolvedValue(createLibraryStatistics());
@@ -345,6 +574,94 @@ describe("LibraryDetailPage", () => {
     fireEvent.change(screen.getByPlaceholderText("e.g. >=1h 30m"), { target: { value: "oops" } });
 
     expect(await screen.findByText("Use a duration like >90m or >=1h 30m.")).toBeInTheDocument();
+    for (const button of screen.getAllByRole("button", { name: "Export analyzed files as CSV" })) {
+      expect(button).toBeDisabled();
+    }
     await waitFor(() => expect(libraryFilesSpy.mock.calls.length).toBe(initialCalls));
+  });
+
+  it("exports the current filtered and sorted result set as CSV", async () => {
+    const libraryId = 707;
+    vi.spyOn(api, "appSettings").mockResolvedValue({
+      ignore_patterns: [],
+      user_ignore_patterns: [],
+      default_ignore_patterns: [],
+      feature_flags: { show_dolby_vision_profiles: false, show_analyzed_files_csv_export: true },
+    });
+    vi.spyOn(api, "librarySummary").mockResolvedValue(createLibrarySummary(libraryId));
+    vi.spyOn(api, "libraryStatistics").mockResolvedValue(createLibraryStatistics());
+    vi.spyOn(api, "libraryFiles").mockResolvedValue(createFilesPage(libraryId));
+    const downloadCsvSpy = vi.spyOn(api, "downloadLibraryFilesCsv").mockResolvedValue({
+      blob: new Blob(["csv"], { type: "text/csv" }),
+      filename: "MediaLyze_Series_707_20260318T120000Z.csv",
+    });
+    const originalCreateObjectUrl = URL.createObjectURL;
+    const originalRevokeObjectUrl = URL.revokeObjectURL;
+    const createObjectUrlSpy = vi.fn(() => "blob:test");
+    const revokeObjectUrlSpy = vi.fn();
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, writable: true, value: createObjectUrlSpy });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, writable: true, value: revokeObjectUrlSpy });
+    const anchorClickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+
+    try {
+      renderPage(libraryId);
+
+      expect(await screen.findByText("2 of 2 entries rendered")).toBeInTheDocument();
+
+      fireEvent.change(screen.getByPlaceholderText("Search file and path"), { target: { value: "episode" } });
+      fireEvent.click(screen.getByRole("button", { name: /add metadata search field/i }));
+      fireEvent.click(screen.getByRole("menuitemcheckbox", { name: /subtitle sources/i }));
+      fireEvent.change(screen.getByPlaceholderText("e.g. internal external"), { target: { value: "external" } });
+      fireEvent.click(screen.getByRole("button", { name: /^codec$/i }));
+
+      fireEvent.click(screen.getAllByRole("button", { name: "Export analyzed files as CSV" })[0]);
+
+      await waitFor(() =>
+        expect(downloadCsvSpy).toHaveBeenCalledWith(
+          String(libraryId),
+          expect.objectContaining({
+            filters: expect.objectContaining({
+              file: "episode",
+              subtitle_sources: "external",
+            }),
+            sortKey: "video_codec",
+            sortDirection: "asc",
+            signal: expect.any(AbortSignal),
+          }),
+        ),
+      );
+      expect(createObjectUrlSpy).toHaveBeenCalled();
+      expect(anchorClickSpy).toHaveBeenCalled();
+      expect(revokeObjectUrlSpy).toHaveBeenCalledWith("blob:test");
+    } finally {
+      Object.defineProperty(URL, "createObjectURL", {
+        configurable: true,
+        writable: true,
+        value: originalCreateObjectUrl,
+      });
+      Object.defineProperty(URL, "revokeObjectURL", {
+        configurable: true,
+        writable: true,
+        value: originalRevokeObjectUrl,
+      });
+    }
+  });
+
+  it("hides the CSV export button when the feature flag is disabled", async () => {
+    const libraryId = 708;
+    vi.spyOn(api, "appSettings").mockResolvedValue({
+      ignore_patterns: [],
+      user_ignore_patterns: [],
+      default_ignore_patterns: [],
+      feature_flags: { show_dolby_vision_profiles: false, show_analyzed_files_csv_export: false },
+    });
+    vi.spyOn(api, "librarySummary").mockResolvedValue(createLibrarySummary(libraryId));
+    vi.spyOn(api, "libraryStatistics").mockResolvedValue(createLibraryStatistics());
+    vi.spyOn(api, "libraryFiles").mockResolvedValue(createFilesPage(libraryId));
+
+    renderPage(libraryId);
+
+    expect(await screen.findByText("2 of 2 entries rendered")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Export analyzed files as CSV" })).not.toBeInTheDocument();
   });
 });
