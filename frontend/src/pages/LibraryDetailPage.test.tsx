@@ -364,7 +364,7 @@ describe("LibraryDetailPage", () => {
     vi.spyOn(api, "libraryFiles").mockResolvedValue(createFilesPage(libraryId));
     const downloadCsvSpy = vi.spyOn(api, "downloadLibraryFilesCsv").mockResolvedValue({
       blob: new Blob(["csv"], { type: "text/csv" }),
-      filename: "medialyze-series-707-files.csv",
+      filename: "MediaLyze_Series_707_20260318T120000Z.csv",
     });
     const originalCreateObjectUrl = URL.createObjectURL;
     const originalRevokeObjectUrl = URL.revokeObjectURL;

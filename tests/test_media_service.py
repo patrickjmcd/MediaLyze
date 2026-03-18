@@ -690,7 +690,7 @@ def test_generate_library_files_csv_export_includes_all_filtered_rows_and_metada
         )
         export_text = _collect_csv_export_text(chunks)
 
-    assert filename.startswith("medialyze-export-batch-files-")
+    assert filename.startswith("MediaLyze_Export_Batch_")
     comment_lines, rows = _split_csv_export(export_text)
     header, data_rows = rows[0], rows[1:]
 

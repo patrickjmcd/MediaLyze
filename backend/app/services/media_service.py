@@ -350,10 +350,10 @@ def _active_export_search_entries(
 
 
 def _csv_export_filename(library_name: str, exported_at: datetime) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "-", library_name.strip().lower()).strip("-")
-    safe_slug = slug or "library"
+    safe_library_name = re.sub(r"[^A-Za-z0-9]+", "_", library_name.strip()).strip("_")
+    safe_slug = safe_library_name or "Library"
     timestamp = exported_at.strftime("%Y%m%dT%H%M%SZ")
-    return f"medialyze-{safe_slug}-files-{timestamp}.csv"
+    return f"MediaLyze_{safe_slug}_{timestamp}.csv"
 
 
 def _csv_export_comment_lines(

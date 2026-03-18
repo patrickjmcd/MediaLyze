@@ -429,6 +429,12 @@ function buildActiveSearchFilters(
   return filters;
 }
 
+function buildCsvFallbackFilename(libraryName: string): string {
+  const safeLibraryName = libraryName.replace(/[^A-Za-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "Library";
+  const timestamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+  return `MediaLyze_${safeLibraryName}_${timestamp}.csv`;
+}
+
 export function LibraryDetailPage() {
   const { t } = useTranslation();
   const { libraryId = "" } = useParams();
@@ -740,7 +746,7 @@ export function LibraryDetailPage() {
       const objectUrl = window.URL.createObjectURL(payload.blob);
       const anchor = document.createElement("a");
       anchor.href = objectUrl;
-      anchor.download = payload.filename ?? `medialyze-library-${libraryId}-files.csv`;
+      anchor.download = payload.filename ?? buildCsvFallbackFilename(displayLibrary.name);
       document.body.append(anchor);
       anchor.click();
       anchor.remove();
